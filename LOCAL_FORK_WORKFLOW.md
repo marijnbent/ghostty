@@ -10,6 +10,21 @@ Related local references:
 
 - [LOCAL_BUILD_OPTIONS.md](/Users/marijn/Projects/ghostty/LOCAL_BUILD_OPTIONS.md)
 
+## Current local setup
+
+This repo is already configured like this:
+
+- current custom branch: `marijn-workspaces`
+- clean upstream mirror branch: `upstream-main`
+- fork remote: `origin` -> `git@github.com:marijnbent/ghostty.git`
+- official remote: `upstream` -> `git@github.com:ghostty-org/ghostty.git`
+
+Current intent:
+
+- do feature work on `marijn-workspaces`
+- use `upstream-main` only as a local mirror of upstream `main`
+- avoid committing custom work on `main`
+
 ## Recommended setup
 
 Recommended branches:
@@ -32,6 +47,14 @@ Recommended remote setup:
 ```bash
 git remote add upstream git@github.com:ghostty-org/ghostty.git
 git fetch upstream
+git branch --track upstream-main upstream/main
+```
+
+If this repo is already configured, verify with:
+
+```bash
+git remote -v
+git branch -vv
 ```
 
 ## Best option
@@ -109,6 +132,13 @@ If there are conflicts, resolve them without dropping our workspace-sidebar chan
 Then rebuild and reinstall the macOS app.
 ```
 
+Good publish prompt:
+
+```text
+Commit the current changes on marijn-workspaces and push them to origin.
+Do not commit on main.
+```
+
 ## macOS build/install
 
 Important repo-specific note:
@@ -143,6 +173,9 @@ Why `ReleaseLocal` is preferred for `/Applications/Ghostty.app`:
 - same bundle identifier as the normal app
 - built for local use
 - avoids the debug bundle id mismatch
+- `macos/install_local_app.sh` refreshes `GhosttyKit.xcframework` in `ReleaseFast`
+  before building the app, so the installed local app does not keep the
+  slower `ReleaseSafe` embedded library
 
 ## Permission note
 
