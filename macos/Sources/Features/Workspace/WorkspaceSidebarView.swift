@@ -161,7 +161,7 @@ private struct WorkspaceSidebarRowView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                if let subtitle = row.subtitle, !subtitle.isEmpty {
+                if !row.isSelected, let subtitle = row.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(subtitleColor)
