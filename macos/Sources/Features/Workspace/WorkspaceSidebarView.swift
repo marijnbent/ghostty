@@ -326,8 +326,13 @@ struct WorkspaceSidebarView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
                 }
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: inactiveRows.isEmpty)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(viewModel.theme.background)
             .environment(\.colorScheme, viewModel.theme.colorScheme)
@@ -353,6 +358,10 @@ private struct WorkspaceSidebarActiveList: View {
                         viewModel: viewModel,
                         sidebarWidth: sidebarWidth
                     )
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.94, anchor: .top)),
+                        removal: .opacity.combined(with: .scale(scale: 0.94, anchor: .top))
+                    ))
                         .background {
                             GeometryReader { geometry in
                                 Color.clear.preference(
@@ -384,6 +393,7 @@ private struct WorkspaceSidebarActiveList: View {
         )
         .animation(WorkspaceSidebarLayout.dragAnimation, value: viewModel.draggingWorkspaceID)
         .animation(WorkspaceSidebarLayout.dragAnimation, value: viewModel.dropInsertionTarget)
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: viewModel.activeDisplayRows.map(\.id))
     }
 }
 
@@ -493,9 +503,10 @@ private struct WorkspaceSidebarRowView: View {
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(theme.subtitle.opacity(0.65))
                     .padding(.trailing, 10)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
             }
         }
+        .animation(.easeInOut(duration: 0.14), value: canShowShortcutHint)
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(
             color: isDragged ? theme.rowSelection.opacity(0.24) : .clear,
@@ -503,8 +514,9 @@ private struct WorkspaceSidebarRowView: View {
             x: 0,
             y: isDragged ? 4 : 0
         )
-        .scaleEffect(isDragged ? 0.985 : 1.0)
+        .scaleEffect(isDragged ? 0.985 : (isHovered ? 1.012 : 1.0))
         .opacity(opacity)
+        .animation(.easeInOut(duration: 0.18), value: row.isSelected)
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovered = hovering
