@@ -28,4 +28,18 @@ struct WorkspaceRemoteSessionKindTests {
     func ignoresNonRemoteCommands(title: String) {
         #expect(WorkspaceRemoteSessionKind.detect(in: title) == nil)
     }
+
+    @Test(arguments: [
+        ("ssh root@192.168.1.10", WorkspaceRemoteSession(kind: .ssh, target: "root@192.168.1.10")),
+        ("ssh -p 2222 prod", WorkspaceRemoteSession(kind: .ssh, target: "prod")),
+        ("ssh -l root 192.168.1.10", WorkspaceRemoteSession(kind: .ssh, target: "root@192.168.1.10")),
+        ("ssh -o User=root 192.168.1.10", WorkspaceRemoteSession(kind: .ssh, target: "root@192.168.1.10")),
+        ("sudo -- mosh devbox", WorkspaceRemoteSession(kind: .mosh, target: "devbox")),
+    ])
+    func capturesRemoteTarget(
+        title: String,
+        expected: WorkspaceRemoteSession
+    ) {
+        #expect(WorkspaceRemoteSession.detect(in: title) == expected)
+    }
 }

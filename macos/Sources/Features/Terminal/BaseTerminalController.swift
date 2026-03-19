@@ -3,6 +3,15 @@ import SwiftUI
 import Combine
 import GhosttyKit
 
+struct WorkspaceRemoteSession: Equatable {
+    let kind: WorkspaceRemoteSessionKind
+    let target: String?
+
+    static func detect(in title: String) -> Self? {
+        WorkspaceRemoteSessionParser.parse(title)
+    }
+}
+
 enum WorkspaceRemoteSessionKind: String, Equatable {
     case ssh
     case mosh
@@ -12,6 +21,23 @@ enum WorkspaceRemoteSessionKind: String, Equatable {
     }
 
     static func detect(in title: String) -> Self? {
+        WorkspaceRemoteSession.detect(in: title)?.kind
+    }
+}
+
+private enum WorkspaceRemoteSessionParser {
+    private static let sshOptionsWithArguments: Set<String> = [
+        "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L",
+        "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+    ]
+
+    private static let moshOptionsWithArguments: Set<String> = [
+        "-b", "-i", "-l", "-p", "--bind-server", "--client", "--family",
+        "--locale", "--predict", "--predict-overwrite", "--server",
+        "--ssh", "--verbose",
+    ]
+
+    static func parse(_ title: String) -> WorkspaceRemoteSession? {
         let tokens = title.split(whereSeparator: \.isWhitespace)
         guard !tokens.isEmpty else { return nil }
 
@@ -61,10 +87,10 @@ enum WorkspaceRemoteSessionKind: String, Equatable {
                 continue
 
             case "ssh":
-                return .ssh
+                return parseSSH(tokens, startIndex: index + 1)
 
             case "mosh", "mosh-client", "mosh-server":
-                return .mosh
+                return parseMosh(tokens, startIndex: index + 1)
 
             default:
                 return nil
@@ -72,6 +98,126 @@ enum WorkspaceRemoteSessionKind: String, Equatable {
         }
 
         return nil
+    }
+
+    private static func parseSSH(
+        _ tokens: [Substring],
+        startIndex: Int
+    ) -> WorkspaceRemoteSession {
+        var index = startIndex
+        var explicitUser: String?
+
+        while index < tokens.count {
+            let token = String(tokens[index])
+
+            if token == "--" {
+                index += 1
+                continue
+            }
+
+            if token == "-l" {
+                let nextIndex = index + 1
+                if nextIndex < tokens.count {
+                    explicitUser = String(tokens[nextIndex])
+                    index += 2
+                } else {
+                    index += 1
+                }
+                continue
+            }
+
+            if token.hasPrefix("-l"), token.count > 2 {
+                explicitUser = String(token.dropFirst(2))
+                index += 1
+                continue
+            }
+
+            if token == "-o" {
+                let nextIndex = index + 1
+                if nextIndex < tokens.count {
+                    updateSSHUser(from: String(tokens[nextIndex]), explicitUser: &explicitUser)
+                    index += 2
+                } else {
+                    index += 1
+                }
+                continue
+            }
+
+            if token.hasPrefix("-o"), token.count > 2 {
+                updateSSHUser(from: String(token.dropFirst(2)), explicitUser: &explicitUser)
+                index += 1
+                continue
+            }
+
+            if token.hasPrefix("-") {
+                index += optionConsumesFollowingToken(token, optionsWithArguments: sshOptionsWithArguments) ? 2 : 1
+                continue
+            }
+
+            let target = if token.contains("@") {
+                token
+            } else if let explicitUser {
+                "\(explicitUser)@\(token)"
+            } else {
+                token
+            }
+
+            return .init(kind: .ssh, target: target)
+        }
+
+        return .init(kind: .ssh, target: nil)
+    }
+
+    private static func parseMosh(
+        _ tokens: [Substring],
+        startIndex: Int
+    ) -> WorkspaceRemoteSession {
+        var index = startIndex
+
+        while index < tokens.count {
+            let token = String(tokens[index])
+
+            if token == "--" {
+                index += 1
+                continue
+            }
+
+            if token.hasPrefix("-") {
+                index += optionConsumesFollowingToken(token, optionsWithArguments: moshOptionsWithArguments) ? 2 : 1
+                continue
+            }
+
+            return .init(kind: .mosh, target: token)
+        }
+
+        return .init(kind: .mosh, target: nil)
+    }
+
+    private static func optionConsumesFollowingToken(
+        _ option: String,
+        optionsWithArguments: Set<String>
+    ) -> Bool {
+        if option.contains("=") {
+            return false
+        }
+
+        return optionsWithArguments.contains(option)
+    }
+
+    private static func updateSSHUser(
+        from optionValue: String,
+        explicitUser: inout String?
+    ) {
+        let parts = optionValue.split(separator: "=", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return }
+
+        let key = parts[0].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+
+        if key == "user" {
+            explicitUser = value
+        }
     }
 }
 
@@ -183,7 +329,7 @@ class BaseTerminalController: NSWindowController,
     private(set) var workspaceLocation: String?
 
     /// Tracks active SSH or mosh sessions per surface in this workspace.
-    private(set) var workspaceRemoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind] = [:]
+    private(set) var workspaceRemoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSession] = [:]
 
     /// The last time this workspace observed shell or user activity.
     private(set) var workspaceLastActivityAt: Date = .now
@@ -1053,7 +1199,7 @@ class BaseTerminalController: NSWindowController,
     }
 
     func setWorkspaceRemoteSessions(
-        _ remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind],
+        _ remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSession],
         notifySidebar: Bool = true
     ) {
         guard workspaceRemoteSessions != remoteSessions else { return }
@@ -1064,17 +1210,17 @@ class BaseTerminalController: NSWindowController,
     }
 
     func currentWorkspaceRemoteSessionKind() -> WorkspaceRemoteSessionKind? {
-        if let focusedSurface, let focusedKind = workspaceRemoteSessions[focusedSurface.id] {
-            return focusedKind
+        if let focusedSurface, let focusedSession = workspaceRemoteSessions[focusedSurface.id] {
+            return focusedSession.kind
         }
 
         for surfaceView in surfaceTree {
-            if let kind = workspaceRemoteSessions[surfaceView.id] {
-                return kind
+            if let session = workspaceRemoteSessions[surfaceView.id] {
+                return session.kind
             }
         }
 
-        return workspaceRemoteSessions.values.first
+        return workspaceRemoteSessions.values.first?.kind
     }
 
     func clearWorkspaceRemoteSession(
@@ -1175,16 +1321,16 @@ class BaseTerminalController: NSWindowController,
     }
 
     private func setWorkspaceRemoteSession(
-        _ kind: WorkspaceRemoteSessionKind?,
+        _ session: WorkspaceRemoteSession?,
         for surface: Ghostty.SurfaceView,
         notifySidebar: Bool = true
     ) {
         let surfaceID = surface.id
         let previous = workspaceRemoteSessions[surfaceID]
 
-        if let kind {
-            guard previous != kind else { return }
-            workspaceRemoteSessions[surfaceID] = kind
+        if let session {
+            guard previous != session else { return }
+            workspaceRemoteSessions[surfaceID] = session
         } else {
             guard previous != nil else { return }
             workspaceRemoteSessions.removeValue(forKey: surfaceID)
@@ -1200,8 +1346,8 @@ class BaseTerminalController: NSWindowController,
         title: String,
         notifySidebar: Bool = true
     ) {
-        guard let kind = WorkspaceRemoteSessionKind.detect(in: title) else { return }
-        setWorkspaceRemoteSession(kind, for: surface, notifySidebar: notifySidebar)
+        guard let session = WorkspaceRemoteSession.detect(in: title) else { return }
+        setWorkspaceRemoteSession(session, for: surface, notifySidebar: notifySidebar)
     }
 
     private func notifyWorkspaceSidebarDidChange() {

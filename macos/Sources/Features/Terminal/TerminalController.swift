@@ -139,7 +139,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         var titleOverride: String?
         var computedTitle: String = "👻"
         var location: String?
-        var remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind] = [:]
+        var remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSession] = [:]
         var lastActivityAt: Date = .now
         var inactiveAt: Date?
         var isInactive: Bool = false
@@ -160,19 +160,23 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             self.focusedSurface = .init(focusedSurface)
         }
 
-        func remoteSessionKind() -> WorkspaceRemoteSessionKind? {
+        func remoteSession() -> WorkspaceRemoteSession? {
             if let focusedSurface = focusedSurface.value,
-               let kind = remoteSessions[focusedSurface.id] {
-                return kind
+               let session = remoteSessions[focusedSurface.id] {
+                return session
             }
 
             for surfaceView in tree {
-                if let kind = remoteSessions[surfaceView.id] {
-                    return kind
+                if let session = remoteSessions[surfaceView.id] {
+                    return session
                 }
             }
 
             return remoteSessions.values.first
+        }
+
+        func remoteSessionKind() -> WorkspaceRemoteSessionKind? {
+            remoteSession()?.kind
         }
     }
 
@@ -736,7 +740,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 id: workspace.id,
                 title: workspaceDisplayTitle(for: workspace),
                 subtitle: workspaceDisplayLocation(for: workspace),
-                remoteSessionLabel: workspace.remoteSessionKind()?.badgeLabel,
+                remoteSessionLabel: workspace.remoteSession()?.kind.badgeLabel,
                 hasRunningCommand: workspace.hasRunningCommand,
                 isSelected: workspace.id == activeWorkspaceID,
                 isInactive: workspace.isInactive
@@ -753,6 +757,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     private func workspaceDisplayLocation(for workspace: WorkspaceState) -> String? {
+        if let remoteTarget = workspace.remoteSession()?.target, !remoteTarget.isEmpty {
+            return remoteTarget
+        }
+
         guard let location = workspace.location, !location.isEmpty else { return nil }
         return (location as NSString).abbreviatingWithTildeInPath
     }
@@ -1136,7 +1144,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 .dropFirst()
                 .sink { [weak self, weak surfaceView] title in
                     if let surfaceView,
-                       let remoteSession = WorkspaceRemoteSessionKind.detect(in: title) {
+                       let remoteSession = WorkspaceRemoteSession.detect(in: title) {
                         workspace.remoteSessions[surfaceView.id] = remoteSession
                     }
                     self?.workspaceSurfaceTitleChanged(
