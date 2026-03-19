@@ -161,6 +161,12 @@ class AppDelegate: NSObject,
     /// If multiple items map to the same shortcut, the most recent one wins.
     private var menuItemsByShortcut: [MenuShortcutKey: Weak<NSMenuItem>] = [:]
 
+    /// Tracks the app-level "press quit twice" guard state for keyboard quit shortcuts.
+    private var quitShortcutGuard = QuitShortcutGuard()
+
+    /// Clears the visible quit prompt after its timeout expires.
+    private var clearQuitPromptTask: DispatchWorkItem?
+
     override init() {
 #if DEBUG
         ghostty = Ghostty.App(configPath: ProcessInfo.processInfo.environment["GHOSTTY_CONFIG_PATH"])
@@ -373,6 +379,10 @@ class AppDelegate: NSObject,
         let windows = NSApplication.shared.windows
         if windows.isEmpty { return .terminateNow }
 
+        if quitShortcutGuard.consumeConfirmedQuitRequest(now: currentTime) {
+            return .terminateNow
+        }
+
         // If we've already accepted to install an update, then we don't need to
         // confirm quit. The user is already expecting the update to happen.
         if updateController.isInstalling {
@@ -428,6 +438,8 @@ class AppDelegate: NSObject,
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        resetQuitPromptState()
+
         // We have no notifications we want to persist after death,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
@@ -575,6 +587,10 @@ class AppDelegate: NSObject,
     }
 
     private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {
+        if handleQuitShortcutKeyDown(event) {
+            return nil
+        }
+
         // If the tab overview is visible and escape is pressed, close it.
         // This can't POSSIBLY be right and is probably a FirstResponder problem
         // that we should handle elsewhere in our program. But this works and it
@@ -632,6 +648,100 @@ class AppDelegate: NSObject,
         }
 
         return event
+    }
+
+    private var currentTime: TimeInterval {
+        ProcessInfo.processInfo.systemUptime
+    }
+
+    private func handleQuitShortcutKeyDown(_ event: NSEvent) -> Bool {
+        guard isQuitShortcut(event) else { return false }
+
+        switch quitShortcutGuard.handleShortcutAttempt(
+            now: currentTime,
+            isRepeat: event.isARepeat
+        ) {
+        case .ignoredRepeat:
+            return true
+
+        case .armed:
+            showQuitPrompt()
+            return true
+
+        case .confirmed:
+            dismissQuitPrompt()
+            NSApp.terminate(nil)
+            return true
+        }
+    }
+
+    private func isQuitShortcut(_ event: NSEvent) -> Bool {
+        guard let eventKey = MenuShortcutKey(event: event) else { return false }
+        guard let quitKey = MenuShortcutKey(
+            keyEquivalent: menuQuit?.keyEquivalent ?? "",
+            modifiers: menuQuit?.keyEquivalentModifierMask ?? []
+        ) else {
+            return false
+        }
+
+        return eventKey == quitKey
+    }
+
+    private func showQuitPrompt() {
+        clearQuitPromptTask?.cancel()
+        dismissQuitPrompt()
+
+        (NSApp.keyWindow as? TerminalWindow)?.setQuitPrompt(quitPromptText)
+        NSSound.beep()
+
+        let task = DispatchWorkItem { [weak self] in
+            self?.resetQuitPromptState()
+        }
+
+        clearQuitPromptTask = task
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + quitShortcutGuard.timeout,
+            execute: task
+        )
+    }
+
+    private func dismissQuitPrompt() {
+        clearQuitPromptTask?.cancel()
+        clearQuitPromptTask = nil
+        NSApp.windows
+            .compactMap { $0 as? TerminalWindow }
+            .forEach { $0.setQuitPrompt(nil) }
+    }
+
+    private func resetQuitPromptState() {
+        dismissQuitPrompt()
+        quitShortcutGuard.cancel()
+    }
+
+    private var quitPromptText: String {
+        "Press \(quitShortcutLabel) again to quit"
+    }
+
+    private var quitShortcutLabel: String {
+        guard let quitMenu = menuQuit else { return "⌘Q" }
+        let flags = quitMenu.keyEquivalentModifierMask
+        var result = ""
+
+        if flags.contains(.control) {
+            result += "⌃"
+        }
+        if flags.contains(.option) {
+            result += "⌥"
+        }
+        if flags.contains(.shift) {
+            result += "⇧"
+        }
+        if flags.contains(.command) {
+            result += "⌘"
+        }
+
+        let key = quitMenu.keyEquivalent.uppercased()
+        return result + (key.isEmpty ? "Q" : key)
     }
 
     @objc private func windowDidBecomeKey(_ notification: Notification) {

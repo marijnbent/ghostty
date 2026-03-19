@@ -24,6 +24,9 @@ class TerminalWindow: NSWindow {
     /// Update notification UI in titlebar
     private let updateAccessory = NSTitlebarAccessoryViewController()
 
+    /// Transient quit guard UI in titlebar.
+    private let quitPromptAccessory = NSTitlebarAccessoryViewController()
+
     /// Visual indicator that mirrors the selected tab color.
     private lazy var tabColorIndicator: NSHostingView<TabColorIndicatorView> = {
         let view = NSHostingView(rootView: TabColorIndicatorView(tabColor: tabColor))
@@ -141,6 +144,13 @@ class TerminalWindow: NSWindow {
         // Create our reset zoom titlebar accessory. We have to have a title
         // to do this or AppKit triggers an assertion.
         if styleMask.contains(.titled) {
+            quitPromptAccessory.layoutAttribute = .right
+            quitPromptAccessory.view = NonDraggableHostingView(rootView: QuitPromptAccessoryView(
+                viewModel: viewModel
+            ))
+            addTitlebarAccessoryViewController(quitPromptAccessory)
+            quitPromptAccessory.view.translatesAutoresizingMaskIntoConstraints = false
+
             resetZoomAccessory.layoutAttribute = .right
             resetZoomAccessory.view = NSHostingView(rootView: ResetZoomAccessoryView(
                 viewModel: viewModel,
@@ -233,6 +243,10 @@ class TerminalWindow: NSWindow {
     @discardableResult
     func beginInlineTabTitleEdit(for targetWindow: NSWindow) -> Bool {
         tabTitleEditor.beginEditing(for: targetWindow)
+    }
+
+    func setQuitPrompt(_ text: String?) {
+        viewModel.quitPromptText = text
     }
 
     @objc private func renameTabFromContextMenu(_ sender: NSMenuItem) {
@@ -650,6 +664,7 @@ extension TerminalWindow {
         @Published var isSurfaceZoomed: Bool = false
         @Published var hasToolbar: Bool = false
         @Published var isMainWindow: Bool = true
+        @Published var quitPromptText: String?
 
         /// Calculates the top padding based on toolbar visibility and macOS version
         fileprivate var accessoryTopPadding: CGFloat {
@@ -682,6 +697,30 @@ extension TerminalWindow {
                 .padding(.top, viewModel.accessoryTopPadding)
                 // We always need space at the end of the titlebar
                 .padding(.trailing, 10)
+            }
+        }
+    }
+
+    struct QuitPromptAccessoryView: View {
+        @ObservedObject var viewModel: ViewModel
+
+        var body: some View {
+            if let text = viewModel.quitPromptText {
+                Text(text)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(.thinMaterial)
+                    )
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(Color.primary.opacity(0.08))
+                    )
+                    .padding(.top, viewModel.accessoryTopPadding)
+                    .padding(.trailing, 6)
             }
         }
     }

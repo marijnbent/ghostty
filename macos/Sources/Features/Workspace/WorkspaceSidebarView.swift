@@ -195,7 +195,7 @@ enum WorkspaceSidebarInsertionMath {
         let orderedFrames = visibleRowIDs.compactMap { rowFrames[$0] }
         guard orderedFrames.count == visibleRowIDs.count else { return nil }
 
-        for (index, frame) in orderedFrames.enumerated() where locationY < frame.midY {
+        for (index, frame) in orderedFrames.enumerated() where locationY <= frame.midY {
             return index
         }
 
