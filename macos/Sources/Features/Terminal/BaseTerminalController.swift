@@ -3,6 +3,78 @@ import SwiftUI
 import Combine
 import GhosttyKit
 
+enum WorkspaceRemoteSessionKind: String, Equatable {
+    case ssh
+    case mosh
+
+    var badgeLabel: String {
+        rawValue.uppercased()
+    }
+
+    static func detect(in title: String) -> Self? {
+        let tokens = title.split(whereSeparator: \.isWhitespace)
+        guard !tokens.isEmpty else { return nil }
+
+        var index = 0
+        while index < tokens.count {
+            let token = String(tokens[index])
+            let basename = (token as NSString).lastPathComponent.lowercased()
+
+            if token.contains("="), !token.hasPrefix("=") {
+                index += 1
+                continue
+            }
+
+            switch basename {
+            case "builtin", "command", "exec", "noglob", "nocorrect", "time":
+                index += 1
+                continue
+
+            case "env":
+                index += 1
+                while index < tokens.count {
+                    let envToken = String(tokens[index])
+                    if envToken.contains("="), !envToken.hasPrefix("=") {
+                        index += 1
+                    } else {
+                        break
+                    }
+                }
+                continue
+
+            case "sudo":
+                index += 1
+                while index < tokens.count {
+                    let sudoToken = String(tokens[index])
+                    if sudoToken == "--" {
+                        index += 1
+                        break
+                    }
+
+                    if sudoToken.hasPrefix("-") || (sudoToken.contains("=") && !sudoToken.hasPrefix("=")) {
+                        index += 1
+                        continue
+                    }
+
+                    break
+                }
+                continue
+
+            case "ssh":
+                return .ssh
+
+            case "mosh", "mosh-client", "mosh-server":
+                return .mosh
+
+            default:
+                return nil
+            }
+        }
+
+        return nil
+    }
+}
+
 /// A base class for windows that can contain Ghostty windows. This base class implements
 /// the bare minimum functionality that every terminal window in Ghostty should implement.
 ///
@@ -92,11 +164,38 @@ class BaseTerminalController: NSWindowController,
     /// An override title for the tab/window set by the user via prompt_tab_title.
     /// When set, this takes precedence over the computed title from the terminal.
     var titleOverride: String? {
-        didSet { applyTitleToWindow() }
+        didSet {
+            applyTitleToWindow()
+            notifyWorkspaceSidebarDidChange()
+        }
     }
 
     /// The last computed title from the focused surface (without the override).
-    private var lastComputedTitle: String = "👻"
+    private(set) var lastComputedTitle: String = "👻"
+
+    /// Tracks surface-driven activity so we can move inactive workspaces around.
+    private var workspaceActivityCancellables: Set<AnyCancellable> = []
+
+    /// Stable ID for sidebar/workspace interactions.
+    let workspaceID: String = UUID().uuidString
+
+    /// The current location shown beneath the workspace title.
+    private(set) var workspaceLocation: String?
+
+    /// Tracks active SSH or mosh sessions per surface in this workspace.
+    private(set) var workspaceRemoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind] = [:]
+
+    /// The last time this workspace observed shell or user activity.
+    private(set) var workspaceLastActivityAt: Date = .now
+
+    /// The time this workspace most recently became inactive.
+    private(set) var workspaceInactiveAt: Date?
+
+    /// True when this workspace is currently in the inactive section.
+    private(set) var workspaceIsInactive: Bool = false
+
+    /// The active-slot position to restore when reactivating.
+    var workspaceSavedActiveIndex: Int = 0
 
     /// The time that undo/redo operations that contain running ptys are valid for.
     var undoExpiration: Duration {
@@ -143,6 +242,7 @@ class BaseTerminalController: NSWindowController,
 
         // Setup our bell state for the window
         setupBellNotificationPublisher()
+        setupWorkspaceActivityObservers()
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
@@ -217,7 +317,7 @@ class BaseTerminalController: NSWindowController,
         // Listen for local events that we need to know of outside of
         // single surface handlers.
         self.eventMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.flagsChanged]
+            matching: [.keyDown, .flagsChanged]
         ) { [weak self] event in self?.localEventHandler(event) }
     }
 
@@ -292,6 +392,8 @@ class BaseTerminalController: NSWindowController,
         if to.isEmpty {
             focusedSurface = nil
         }
+
+        setupWorkspaceActivityObservers()
     }
 
     /// Update all surfaces with the focus state. This ensures that libghostty has an accurate view about
@@ -360,7 +462,11 @@ class BaseTerminalController: NSWindowController,
         guard let window else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Change Tab Title"
+        alert.messageText = if self is TerminalController {
+            "Rename Workspace"
+        } else {
+            "Change Tab Title"
+        }
         alert.informativeText = "Leave blank to restore the default."
         alert.alertStyle = .informational
 
@@ -774,12 +880,27 @@ class BaseTerminalController: NSWindowController,
 
     private func localEventHandler(_ event: NSEvent) -> NSEvent? {
         return switch event.type {
+        case .keyDown:
+            localEventKeyDown(event)
+
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel:
+            localEventUserActivity(event)
+
         case .flagsChanged:
             localEventFlagsChanged(event)
 
         default:
             event
         }
+    }
+
+    private func localEventKeyDown(_ event: NSEvent) -> NSEvent? {
+        if handleLocalKeyDown(event) {
+            recordWorkspaceUserActivity()
+            return nil
+        }
+
+        return localEventUserActivity(event)
     }
 
     private func localEventFlagsChanged(_ event: NSEvent) -> NSEvent? {
@@ -799,6 +920,17 @@ class BaseTerminalController: NSWindowController,
         return event
     }
 
+    private func localEventUserActivity(_ event: NSEvent) -> NSEvent? {
+        guard let window else { return event }
+        guard event.window == window || NSApp.keyWindow == window else { return event }
+        recordWorkspaceUserActivity()
+        return event
+    }
+
+    func handleLocalKeyDown(_ event: NSEvent) -> Bool {
+        false
+    }
+
     // MARK: TerminalViewDelegate
 
     func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
@@ -814,15 +946,32 @@ class BaseTerminalController: NSWindowController,
         // closed surfaces.
         if let titleSurface = focusedSurface ?? lastFocusedSurface,
            surfaceTree.contains(titleSurface) {
+            titleSurface.$title
+                .sink { [weak self, weak titleSurface] title in
+                    guard let self, let titleSurface else { return }
+                    self.updateWorkspaceRemoteSessionIfNeeded(
+                        for: titleSurface,
+                        title: title
+                    )
+                }
+                .store(in: &focusedSurfaceCancellables)
+
             // If we have a surface, we want to listen for title changes.
             titleSurface.$title
                 .combineLatest(titleSurface.$bell)
                 .map { [weak self] in self?.computeTitle(title: $0, bell: $1) ?? "" }
                 .sink { [weak self] in self?.titleDidChange(to: $0) }
                 .store(in: &focusedSurfaceCancellables)
+
+            titleSurface.$pwd
+                .sink { [weak self] pwd in
+                    self?.workspaceLocationDidChange(pwd)
+                }
+                .store(in: &focusedSurfaceCancellables)
         } else {
             // There is no surface to listen to titles for.
             titleDidChange(to: "👻")
+            workspaceLocationDidChange(nil)
         }
     }
 
@@ -838,6 +987,7 @@ class BaseTerminalController: NSWindowController,
     private func titleDidChange(to: String) {
         lastComputedTitle = to
         applyTitleToWindow()
+        notifyWorkspaceSidebarDidChange()
     }
 
     private func applyTitleToWindow() {
@@ -862,6 +1012,8 @@ class BaseTerminalController: NSWindowController,
         } else {
             window.representedURL = nil
         }
+
+        notifyWorkspaceSidebarDidChange()
     }
 
     func cellSizeDidChange(to: NSSize) {
@@ -871,6 +1023,182 @@ class BaseTerminalController: NSWindowController,
         // set content resize increments to this value, so avoid an assertion failure.
         guard to.width > 0 && to.height > 0 else { return }
         self.window?.contentResizeIncrements = to
+    }
+
+    private func workspaceLocationDidChange(_ pwd: String?) {
+        workspaceLocation = pwd
+        notifyWorkspaceSidebarDidChange()
+    }
+
+    func setWorkspaceComputedTitle(_ title: String, notifySidebar: Bool = true) {
+        lastComputedTitle = title
+        applyTitleToWindow()
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    func setWorkspaceDisplayLocation(_ pwd: String?, notifySidebar: Bool = true) {
+        workspaceLocation = pwd
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    func setWorkspaceRemoteSessions(
+        _ remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind],
+        notifySidebar: Bool = true
+    ) {
+        guard workspaceRemoteSessions != remoteSessions else { return }
+        workspaceRemoteSessions = remoteSessions
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    func currentWorkspaceRemoteSessionKind() -> WorkspaceRemoteSessionKind? {
+        if let focusedSurface, let focusedKind = workspaceRemoteSessions[focusedSurface.id] {
+            return focusedKind
+        }
+
+        for surfaceView in surfaceTree {
+            if let kind = workspaceRemoteSessions[surfaceView.id] {
+                return kind
+            }
+        }
+
+        return workspaceRemoteSessions.values.first
+    }
+
+    func clearWorkspaceRemoteSession(
+        for surface: Ghostty.SurfaceView,
+        notifySidebar: Bool = true
+    ) {
+        setWorkspaceRemoteSession(nil, for: surface, notifySidebar: notifySidebar)
+    }
+
+    func pruneWorkspaceRemoteSessions(
+        to surfaceIDs: Set<Ghostty.SurfaceView.ID>,
+        notifySidebar: Bool = true
+    ) {
+        let pruned = workspaceRemoteSessions.filter { surfaceIDs.contains($0.key) }
+        guard pruned != workspaceRemoteSessions else { return }
+        workspaceRemoteSessions = pruned
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    func recordWorkspaceUserActivity() {
+        recordWorkspaceActivity(reactivateIfNeeded: true)
+    }
+
+    func recordWorkspaceShellActivity() {
+        recordWorkspaceActivity(reactivateIfNeeded: true)
+    }
+
+    private func recordWorkspaceActivity(reactivateIfNeeded: Bool) {
+        workspaceLastActivityAt = .now
+        if reactivateIfNeeded && workspaceIsInactive {
+            if let terminalController = self as? TerminalController {
+                terminalController.reactivateWorkspace(self, selectAfterReordering: false)
+            }
+        }
+    }
+
+    private func setupWorkspaceActivityObservers() {
+        workspaceActivityCancellables.removeAll()
+        pruneWorkspaceRemoteSessions(to: Set(surfaceTree.map(\.id)), notifySidebar: false)
+
+        for surfaceView in surfaceTree {
+            NotificationCenter.default.publisher(
+                for: .ghosttyDidUpdateScrollbar,
+                object: surfaceView
+            )
+            .sink { [weak self] _ in
+                self?.recordWorkspaceShellActivity()
+            }
+            .store(in: &workspaceActivityCancellables)
+
+            surfaceView.$pwd
+                .dropFirst()
+                .sink { [weak self] _ in
+                    self?.clearWorkspaceRemoteSession(for: surfaceView)
+                    self?.recordWorkspaceShellActivity()
+                }
+                .store(in: &workspaceActivityCancellables)
+
+            surfaceView.$title
+                .dropFirst()
+                .sink { [weak self] title in
+                    self?.updateWorkspaceRemoteSessionIfNeeded(
+                        for: surfaceView,
+                        title: title
+                    )
+                    self?.recordWorkspaceShellActivity()
+                }
+                .store(in: &workspaceActivityCancellables)
+
+            surfaceView.$progressReport
+                .dropFirst()
+                .sink { [weak self] _ in
+                    self?.recordWorkspaceShellActivity()
+                }
+                .store(in: &workspaceActivityCancellables)
+        }
+    }
+
+    func updateWorkspaceActivityState(
+        inactive: Bool,
+        inactiveAt: Date?,
+        notifySidebar: Bool = true
+    ) {
+        workspaceIsInactive = inactive
+        workspaceInactiveAt = inactiveAt
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    func setWorkspaceLastActivity(_ date: Date, notifySidebar: Bool = false) {
+        workspaceLastActivityAt = date
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    private func setWorkspaceRemoteSession(
+        _ kind: WorkspaceRemoteSessionKind?,
+        for surface: Ghostty.SurfaceView,
+        notifySidebar: Bool = true
+    ) {
+        let surfaceID = surface.id
+        let previous = workspaceRemoteSessions[surfaceID]
+
+        if let kind {
+            guard previous != kind else { return }
+            workspaceRemoteSessions[surfaceID] = kind
+        } else {
+            guard previous != nil else { return }
+            workspaceRemoteSessions.removeValue(forKey: surfaceID)
+        }
+
+        if notifySidebar {
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    private func updateWorkspaceRemoteSessionIfNeeded(
+        for surface: Ghostty.SurfaceView,
+        title: String,
+        notifySidebar: Bool = true
+    ) {
+        guard let kind = WorkspaceRemoteSessionKind.detect(in: title) else { return }
+        setWorkspaceRemoteSession(kind, for: surface, notifySidebar: notifySidebar)
+    }
+
+    private func notifyWorkspaceSidebarDidChange() {
+        (self as? TerminalController)?.refreshWorkspaceSidebarGroup()
     }
 
     func performSplitAction(_ action: TerminalSplitOperation) {

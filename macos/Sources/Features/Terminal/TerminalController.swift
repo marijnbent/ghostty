@@ -6,6 +6,47 @@ import GhosttyKit
 
 /// A classic, tabbed terminal experience.
 class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Controller {
+    @MainActor
+    private final class WorkspaceState: Identifiable {
+        let id: String
+        var tree: SplitTree<Ghostty.SurfaceView>
+        var focusedSurface = Weak<Ghostty.SurfaceView>()
+        var titleOverride: String?
+        var computedTitle: String = "👻"
+        var location: String?
+        var remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSessionKind] = [:]
+        var lastActivityAt: Date = .now
+        var inactiveAt: Date?
+        var isInactive: Bool = false
+        var savedActiveIndex: Int = 0
+        var subscriptions: Set<AnyCancellable> = []
+
+        init(
+            id: String = UUID().uuidString,
+            tree: SplitTree<Ghostty.SurfaceView>,
+            focusedSurface: Ghostty.SurfaceView? = nil
+        ) {
+            self.id = id
+            self.tree = tree
+            self.focusedSurface = .init(focusedSurface)
+        }
+
+        func remoteSessionKind() -> WorkspaceRemoteSessionKind? {
+            if let focusedSurface = focusedSurface.value,
+               let kind = remoteSessions[focusedSurface.id] {
+                return kind
+            }
+
+            for surfaceView in tree {
+                if let kind = remoteSessions[surfaceView.id] {
+                    return kind
+                }
+            }
+
+            return remoteSessions.values.first
+        }
+    }
+
     override var windowNibName: NSNib.Name? {
         let defaultValue = "Terminal"
 
@@ -56,6 +97,16 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// The notification cancellable for focused surface property changes.
     private var surfaceAppearanceCancellables: Set<AnyCancellable> = []
 
+    /// Shared sidebar state for the custom workspace list.
+    private let workspaceSidebarViewModel = WorkspaceSidebarViewModel()
+    private var workspaces: [WorkspaceState] = []
+    private var activeWorkspaceID: String
+    private var isApplyingWorkspaceState: Bool = false
+    private var workspaceSidebarVisible: Bool = true
+    private var workspaceSidebarWidth: CGFloat = 248
+
+    private static let workspaceInactivityInterval: TimeInterval = 5 * 60
+
     init(_ ghostty: Ghostty.App,
          withBaseConfig base: Ghostty.SurfaceConfiguration? = nil,
          withSurfaceTree tree: SplitTree<Ghostty.SurfaceView>? = nil,
@@ -70,8 +121,18 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         // Setup our initial derived config based on the current app config
         self.derivedConfig = DerivedConfig(ghostty.config)
+        let initialWorkspaceID = UUID().uuidString
+        self.activeWorkspaceID = initialWorkspaceID
 
         super.init(ghostty, baseConfig: base, surfaceTree: tree)
+        self.workspaces = [.init(id: initialWorkspaceID, tree: self.surfaceTree, focusedSurface: self.focusedSurface)]
+        self.workspaces[0].computedTitle = self.lastComputedTitle
+        self.workspaces[0].titleOverride = self.titleOverride
+        self.workspaces[0].location = self.workspaceLocation
+        self.workspaces[0].remoteSessions = self.workspaceRemoteSessions
+        self.workspaces[0].lastActivityAt = self.workspaceLastActivityAt
+        self.workspaces[0].savedActiveIndex = 0
+        rebuildWorkspaceObservers(for: self.workspaces[0])
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
@@ -154,10 +215,20 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             window.surfaceIsZoomed = to.zoomed != nil
         }
 
-        // If our surface tree is now nil then we close our window.
+        if isApplyingWorkspaceState { return }
+
+        // If our surface tree is now nil then we close our window or workspace.
         if to.isEmpty {
-            self.window?.close()
+            if workspaces.count > 1 {
+                closeTabImmediately()
+            } else {
+                self.window?.close()
+            }
+            return
         }
+
+        syncActiveWorkspaceFromController(rebuildObservers: true)
+        refreshWorkspaceSidebar()
     }
 
     override func replaceSurfaceTree(
@@ -167,7 +238,6 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         undoAction: String? = nil
     ) {
         // We have a special case if our tree is empty to close our tab immediately.
-        // This makes it so that undo is handled properly.
         if newTree.isEmpty {
             closeTabImmediately()
             return
@@ -372,123 +442,21 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         from parent: NSWindow? = nil,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil
     ) -> TerminalController? {
-        // Making sure that we're dealing with a TerminalController. If not,
-        // then we just create a new window.
         guard let parent,
               let parentController = parent.windowController as? TerminalController else {
             return newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent)
         }
 
-        // If our parent is in non-native fullscreen, then new tabs do not work.
-        // See: https://github.com/mitchellh/ghostty/issues/392
-        if let fullscreenStyle = parentController.fullscreenStyle,
-           fullscreenStyle.isFullscreen && !fullscreenStyle.supportsTabs {
-            let alert = NSAlert()
-            alert.messageText = "Cannot Create New Tab"
-            alert.informativeText = "New tabs are unsupported while in non-native fullscreen. Exit fullscreen and try again."
-            alert.addButton(withTitle: "OK")
-            alert.alertStyle = .warning
-            alert.beginSheetModal(for: parent)
-            return nil
-        }
+        parentController.addWorkspace(withBaseConfig: baseConfig)
+        return parentController
+    }
 
-        // Create a new window and add it to the parent
-        let controller = TerminalController.init(ghostty, withBaseConfig: baseConfig)
-        guard let window = controller.window else { return controller }
-
-        // If the parent is miniaturized, then macOS exhibits really strange behaviors
-        // so we have to bring it back out.
-        if parent.isMiniaturized { parent.deminiaturize(self) }
-
-        // If our parent tab group already has this window, macOS added it and
-        // we need to remove it so we can set the correct order in the next line.
-        // If we don't do this, macOS gets really confused and the tabbedWindows
-        // state becomes incorrect.
-        //
-        // At the time of writing this code, the only known case this happens
-        // is when the "+" button is clicked in the tab bar.
-        if let tg = parent.tabGroup,
-           tg.windows.firstIndex(of: window) != nil {
-            tg.removeWindow(window)
-        }
-
-        // If we don't allow tabs then we create a new window instead.
-        if window.tabbingMode != .disallowed {
-            // Add the window to the tab group and show it.
-            switch ghostty.config.windowNewTabPosition {
-            case "end":
-                // If we already have a tab group and we want the new tab to open at the end,
-                // then we use the last window in the tab group as the parent.
-                if let last = parent.tabGroup?.windows.last {
-                    last.addTabbedWindowSafely(window, ordered: .above)
-                } else {
-                    fallthrough
-                }
-
-            case "current": fallthrough
-            default:
-                parent.addTabbedWindowSafely(window, ordered: .above)
-            }
-        }
-
-        // We're dispatching this async because otherwise the lastCascadePoint doesn't
-        // take effect. Our best theory is there is some next-event-loop-tick logic
-        // that Cocoa is doing that we need to be after.
-        DispatchQueue.main.async {
-            // Only cascade if we aren't fullscreen and are alone in the tab group.
-            if !window.styleMask.contains(.fullScreen) &&
-                window.tabGroup?.windows.count ?? 1 == 1 {
-                let hasFixedPos = controller.derivedConfig.windowPositionX != nil && controller.derivedConfig.windowPositionY != nil
-                Self.applyCascade(to: window, hasFixedPos: hasFixedPos)
-            }
-
-            controller.showWindow(self)
-            window.makeKeyAndOrderFront(self)
-
-            // We also activate our app so that it becomes front. This may be
-            // necessary for the dock menu.
-            NSApp.activate(ignoringOtherApps: true)
-        }
-
-        // It takes an event loop cycle until the macOS tabGroup state becomes
-        // consistent which causes our tab labeling to be off when the "+" button
-        // is used in the tab bar. This fixes that. If we can find a more robust
-        // solution we should do that.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            controller.relabelTabs()
-        }
-
-        // Setup our undo
-        if let undoManager = parentController.undoManager {
-            undoManager.setActionName("New Tab")
-            undoManager.registerUndo(
-                withTarget: controller,
-                expiresAfter: controller.undoExpiration
-            ) { target in
-                // Close the tab when undoing. We do this in a DispatchQueue because
-                // for some people on macOS Tahoe this caused a crash and the queue
-                // fixes it.
-                // https://github.com/ghostty-org/ghostty/pull/9512
-                DispatchQueue.main.async {
-                    undoManager.disableUndoRegistration {
-                        target.closeTab(nil)
-                    }
-                }
-
-                // Register redo action
-                undoManager.registerUndo(
-                    withTarget: ghostty,
-                    expiresAfter: target.undoExpiration
-                ) { ghostty in
-                    _ = TerminalController.newTab(
-                        ghostty,
-                        from: parent,
-                        withBaseConfig: baseConfig)
-                }
-            }
-        }
-
-        return controller
+    static func newWorkspace(
+        _ ghostty: Ghostty.App,
+        from parent: NSWindow? = nil,
+        withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil
+    ) -> TerminalController? {
+        newTab(ghostty, from: parent, withBaseConfig: baseConfig)
     }
 
     // MARK: - Methods
@@ -523,26 +491,478 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     /// changes, when a window is closed, and when tabs are reordered
     /// with the mouse.
     func relabelTabs() {
-        // We only listen for frame changes if we have more than 1 window,
-        // otherwise the accessory view doesn't matter.
-        tabListenForFrame = window?.tabbedWindows?.count ?? 0 > 1
+        tabListenForFrame = false
+        refreshWorkspaceSidebarGroup()
+    }
 
-        if let windows = window?.tabbedWindows as? [TerminalWindow] {
-            for (tab, window) in zip(1..., windows) {
-                // We need to clear any windows beyond this because they have had
-                // a keyEquivalent set previously.
-                guard tab <= 9 else {
-                    window.keyEquivalent = ""
-                    continue
-                }
+    private func configureWorkspaceSidebarActions() {
+        workspaceSidebarViewModel.selectWorkspace = { [weak self] id in
+            self?.selectWorkspace(withID: id)
+        }
+        workspaceSidebarViewModel.moveWorkspace = { [weak self] sourceID, targetID in
+            self?.moveWorkspace(sourceID: sourceID, before: targetID)
+        }
+        workspaceSidebarViewModel.renameSelectedWorkspace = { [weak self] in
+            self?.promptTabTitle()
+        }
+        workspaceSidebarViewModel.newWorkspace = { [weak self] in
+            guard let self else { return }
+            _ = Self.newWorkspace(self.ghostty, from: self.window)
+        }
+    }
 
-                if let equiv = ghostty.config.keyboardShortcut(for: "goto_tab:\(tab)") {
-                    window.keyEquivalent = "\(equiv)"
-                } else {
-                    window.keyEquivalent = ""
-                }
+    private var activeWorkspaceState: WorkspaceState? {
+        workspaces.first(where: { $0.id == activeWorkspaceID })
+    }
+
+    private func makeWorkspaceState(
+        withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
+        tree: SplitTree<Ghostty.SurfaceView>? = nil
+    ) -> WorkspaceState? {
+        let workspaceTree: SplitTree<Ghostty.SurfaceView>
+        if let tree {
+            workspaceTree = tree
+        } else {
+            guard let ghosttyApp = ghostty.app else { return nil }
+            workspaceTree = .init(view: Ghostty.SurfaceView(ghosttyApp, baseConfig: baseConfig))
+        }
+
+        let focusedSurface = workspaceTree.first
+
+        let workspace = WorkspaceState(tree: workspaceTree, focusedSurface: focusedSurface)
+        workspace.savedActiveIndex = workspaces.filter { !$0.isInactive }.count
+        rebuildWorkspaceObservers(for: workspace)
+        return workspace
+    }
+
+    private func addWorkspace(withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil) {
+        guard let workspace = makeWorkspaceState(withBaseConfig: baseConfig) else { return }
+
+        syncActiveWorkspaceFromController()
+
+        let activeCount = workspaces.filter { !$0.isInactive }.count
+        let insertionIndex: Int = switch ghostty.config.windowNewTabPosition {
+        case "end":
+            activeCount
+        case "current":
+            if let currentIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID }) {
+                min(currentIndex + 1, activeCount)
+            } else {
+                activeCount
+            }
+        default:
+            activeCount
+        }
+
+        workspaces.insert(workspace, at: insertionIndex)
+        syncWorkspaceSavedActiveIndices()
+        switchWorkspace(to: workspace.id)
+    }
+
+    func refreshWorkspaceSidebarGroup() {
+        guard !isApplyingWorkspaceState else { return }
+        syncActiveWorkspaceFromController()
+        refreshWorkspaceSidebar()
+    }
+
+    private func refreshWorkspaceSidebar() {
+        let showSidebar = supportsWorkspaceSidebar && workspaceSidebarVisible
+        let sidebarTheme = makeWorkspaceSidebarTheme()
+        let rootView: AnyView? = if showSidebar {
+            AnyView(WorkspaceSidebarView(viewModel: workspaceSidebarViewModel))
+        } else {
+            nil
+        }
+        if let window = window as? TerminalWindow {
+            window.workspaceSidebarActive = supportsWorkspaceSidebar
+            window.tabbingMode = .disallowed
+        }
+        workspaceSidebarViewModel.rows = workspaceRowsForSidebar()
+        workspaceSidebarViewModel.theme = sidebarTheme
+        terminalViewContainer?.updateWorkspaceSidebarDividerColor(NSColor(sidebarTheme.divider))
+        terminalViewContainer?.updateWorkspaceSidebar(
+            rootView: rootView,
+            width: workspaceSidebarWidth
+        )
+    }
+
+    private var supportsWorkspaceSidebar: Bool {
+        true
+    }
+
+    private func workspaceRowsForSidebar() -> [WorkspaceSidebarRow] {
+        workspaces.map { workspace in
+            WorkspaceSidebarRow(
+                id: workspace.id,
+                title: workspaceDisplayTitle(for: workspace),
+                subtitle: workspaceDisplayLocation(for: workspace),
+                remoteSessionLabel: workspace.remoteSessionKind()?.badgeLabel,
+                isSelected: workspace.id == activeWorkspaceID,
+                isInactive: workspace.isInactive
+            )
+        }
+    }
+
+    private func workspaceDisplayTitle(for workspace: WorkspaceState) -> String {
+        let title = workspace.titleOverride ?? workspace.computedTitle
+        return title.isEmpty ? "Workspace" : title
+    }
+
+    private func workspaceDisplayLocation(for workspace: WorkspaceState) -> String? {
+        guard let location = workspace.location, !location.isEmpty else { return nil }
+        return (location as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func makeWorkspaceSidebarTheme() -> WorkspaceSidebarTheme {
+        let baseBackground = (
+            (window as? TerminalWindow)?.preferredBackgroundColor?.withAlphaComponent(1) ??
+            NSColor(ghostty.config.backgroundColor).withAlphaComponent(1)
+        )
+        let isLight = baseBackground.isLightColor
+        let background = blendedSidebarColor(
+            baseBackground,
+            fraction: isLight ? 0.08 : 0.06,
+            with: isLight ? .black : .white
+        )
+        let divider = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.14 : 0.16,
+            with: isLight ? .black : .white
+        )
+        let rowSelection = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.16 : 0.18,
+            with: isLight ? .black : .white
+        )
+        let inactiveBackground = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.04 : 0.08,
+            with: isLight ? .black : .white
+        ).withAlphaComponent(isLight ? 0.42 : 0.52)
+        let titleColor = isLight
+            ? NSColor(calibratedWhite: 0.08, alpha: 0.96)
+            : NSColor(calibratedWhite: 0.95, alpha: 0.96)
+        let subtitleColor = isLight
+            ? NSColor(calibratedWhite: 0.22, alpha: 0.86)
+            : NSColor(calibratedWhite: 0.78, alpha: 0.82)
+        let inactiveTitleColor = titleColor.withAlphaComponent(isLight ? 0.52 : 0.5)
+        let inactiveSubtitleColor = subtitleColor.withAlphaComponent(isLight ? 0.44 : 0.46)
+        let badgeBaseColor = NSColor.controlAccentColor
+        let badgeBackground = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.18 : 0.24,
+            with: badgeBaseColor
+        ).withAlphaComponent(isLight ? 0.92 : 0.9)
+        let badgeForeground = isLight
+            ? badgeBaseColor.shadow(withLevel: 0.12) ?? badgeBaseColor
+            : badgeBaseColor.highlight(withLevel: 0.1) ?? badgeBaseColor
+
+        return .init(
+            background: Color(nsColor: background),
+            divider: Color(nsColor: divider),
+            rowSelection: Color(nsColor: rowSelection),
+            rowInactiveBackground: Color(nsColor: inactiveBackground),
+            title: Color(nsColor: titleColor),
+            subtitle: Color(nsColor: subtitleColor),
+            inactiveTitle: Color(nsColor: inactiveTitleColor),
+            inactiveSubtitle: Color(nsColor: inactiveSubtitleColor),
+            badgeBackground: Color(nsColor: badgeBackground),
+            badgeForeground: Color(nsColor: badgeForeground),
+            colorScheme: isLight ? .light : .dark
+        )
+    }
+
+    private func blendedSidebarColor(
+        _ background: NSColor,
+        fraction: CGFloat,
+        with color: NSColor
+    ) -> NSColor {
+        background.blended(withFraction: fraction, of: color) ?? background
+    }
+
+    private func switchWorkspace(to workspaceID: String) {
+        guard workspaces.contains(where: { $0.id == workspaceID }) else { return }
+        guard workspaceID != activeWorkspaceID else {
+            refreshWorkspaceSidebar()
+            return
+        }
+
+        syncActiveWorkspaceFromController()
+        activeWorkspaceID = workspaceID
+        restoreActiveWorkspaceState()
+        refreshWorkspaceSidebar()
+    }
+
+    private func selectWorkspace(withID id: String) {
+        if let target = workspaces.first(where: { $0.id == id }), target.isInactive {
+            reactivateWorkspace(id: target.id, selectAfterReordering: true)
+            return
+        }
+
+        switchWorkspace(to: id)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        recordWorkspaceUserActivity()
+    }
+
+    private func moveWorkspace(sourceID: String, before targetID: String?) {
+        syncActiveWorkspaceFromController()
+        guard workspaces.count > 1 else { return }
+
+        var active = workspaces.filter { !$0.isInactive }
+        let inactive = workspaces.filter(\.isInactive)
+        guard let sourceIndex = active.firstIndex(where: { $0.id == sourceID }) else { return }
+        let moving = active.remove(at: sourceIndex)
+
+        let targetIndex = if let targetID,
+            let index = active.firstIndex(where: { $0.id == targetID }) {
+            index
+        } else {
+            active.endIndex
+        }
+
+        active.insert(moving, at: min(targetIndex, active.count))
+        workspaces = active + inactive
+        syncWorkspaceSavedActiveIndices()
+        refreshWorkspaceSidebar()
+    }
+
+    func evaluateWorkspaceInactivity(referenceDate: Date) {
+        syncActiveWorkspaceFromController()
+
+        for workspace in workspaces where !workspace.isInactive {
+            guard referenceDate.timeIntervalSince(workspace.lastActivityAt) >= Self.workspaceInactivityInterval else { continue }
+            makeWorkspaceInactive(id: workspace.id, referenceDate: referenceDate)
+        }
+    }
+
+    private func makeWorkspaceInactive(id: String, referenceDate: Date) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        guard !workspace.isInactive else { return }
+
+        let nextActiveWorkspaceID: String? = if id == activeWorkspaceID {
+            workspaces.first(where: { $0.id != id && !$0.isInactive })?.id
+        } else {
+            nil
+        }
+
+        let activeWorkspaces = workspaces.filter { !$0.isInactive }
+        workspace.savedActiveIndex = activeWorkspaces.firstIndex(where: { $0.id == id }) ?? workspace.savedActiveIndex
+        workspace.isInactive = true
+        workspace.inactiveAt = referenceDate
+
+        reorderWorkspaces()
+
+        if id == activeWorkspaceID {
+            updateWorkspaceActivityState(inactive: true, inactiveAt: referenceDate, notifySidebar: false)
+        }
+
+        if let nextActiveWorkspaceID {
+            switchWorkspace(to: nextActiveWorkspaceID)
+        } else {
+            refreshWorkspaceSidebar()
+        }
+    }
+
+    func reactivateWorkspace(_ controller: BaseTerminalController, selectAfterReordering: Bool) {
+        guard controller === self else { return }
+        reactivateWorkspace(id: activeWorkspaceID, selectAfterReordering: selectAfterReordering)
+    }
+
+    func reactivateWorkspace(id: String, selectAfterReordering: Bool) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        guard workspace.isInactive else {
+            if selectAfterReordering {
+                switchWorkspace(to: id)
+            }
+            return
+        }
+
+        workspace.isInactive = false
+        workspace.inactiveAt = nil
+        workspace.lastActivityAt = .now
+
+        let active = workspaces.filter { !$0.isInactive && $0.id != id }
+        let inactive = workspaces.filter { $0.isInactive && $0.id != id }
+        let insertIndex = min(workspace.savedActiveIndex, active.count)
+        workspaces = Array(active.prefix(insertIndex)) + [workspace] + Array(active.dropFirst(insertIndex)) + inactive
+        syncWorkspaceSavedActiveIndices()
+
+        if selectAfterReordering {
+            switchWorkspace(to: id)
+        } else {
+            refreshWorkspaceSidebar()
+        }
+    }
+
+    private func reorderWorkspaces() {
+        let active = workspaces.filter { !$0.isInactive }
+        let inactive = workspaces
+            .filter(\.isInactive)
+            .sorted { lhs, rhs in
+                (lhs.inactiveAt ?? .distantPast) > (rhs.inactiveAt ?? .distantPast)
+            }
+        workspaces = active + inactive
+        syncWorkspaceSavedActiveIndices()
+    }
+
+    private func syncWorkspaceSavedActiveIndices() {
+        let activeWorkspaces = workspaces.filter { !$0.isInactive }
+        for (index, workspace) in activeWorkspaces.enumerated() {
+            workspace.savedActiveIndex = index
+        }
+    }
+
+    private func syncActiveWorkspaceFromController(rebuildObservers: Bool = false) {
+        guard let workspace = activeWorkspaceState else { return }
+        workspace.tree = surfaceTree
+        workspace.focusedSurface.value = focusedSurface
+        workspace.titleOverride = titleOverride
+        workspace.computedTitle = lastComputedTitle
+        workspace.location = workspaceLocation
+        workspace.remoteSessions = workspaceRemoteSessions
+        workspace.lastActivityAt = workspaceLastActivityAt
+        workspace.isInactive = workspaceIsInactive
+        workspace.inactiveAt = workspaceInactiveAt
+        workspace.savedActiveIndex = workspaceSavedActiveIndex
+        if rebuildObservers {
+            rebuildWorkspaceObservers(for: workspace)
+        }
+    }
+
+    private func restoreActiveWorkspaceState() {
+        guard let workspace = activeWorkspaceState else { return }
+        isApplyingWorkspaceState = true
+        defer { isApplyingWorkspaceState = false }
+
+        surfaceTree = workspace.tree
+        focusedSurface = if let candidate = workspace.focusedSurface.value, surfaceTree.contains(candidate) {
+            candidate
+        } else {
+            surfaceTree.first
+        }
+        titleOverride = workspace.titleOverride
+        setWorkspaceComputedTitle(workspace.computedTitle, notifySidebar: false)
+        setWorkspaceDisplayLocation(workspace.location, notifySidebar: false)
+        setWorkspaceRemoteSessions(workspace.remoteSessions, notifySidebar: false)
+        updateWorkspaceActivityState(
+            inactive: workspace.isInactive,
+            inactiveAt: workspace.inactiveAt,
+            notifySidebar: false
+        )
+        setWorkspaceLastActivity(workspace.lastActivityAt, notifySidebar: false)
+        workspaceSavedActiveIndex = workspace.savedActiveIndex
+
+        if let surface = focusedSurface {
+            DispatchQueue.main.async {
+                Ghostty.moveFocus(to: surface)
             }
         }
+    }
+
+    private func rebuildWorkspaceObservers(for workspace: WorkspaceState) {
+        workspace.subscriptions.removeAll()
+        workspace.remoteSessions = workspace.remoteSessions.filter { remoteSession in
+            workspace.tree.contains { $0.id == remoteSession.key }
+        }
+
+        for surfaceView in workspace.tree {
+            NotificationCenter.default.publisher(
+                for: .ghosttyDidUpdateScrollbar,
+                object: surfaceView
+            )
+            .sink { [weak self] _ in
+                self?.workspaceObservedActivity(workspaceID: workspace.id)
+            }
+            .store(in: &workspace.subscriptions)
+
+            surfaceView.$title
+                .dropFirst()
+                .sink { [weak self, weak surfaceView] title in
+                    if let surfaceView,
+                       let remoteSession = WorkspaceRemoteSessionKind.detect(in: title) {
+                        workspace.remoteSessions[surfaceView.id] = remoteSession
+                    }
+                    self?.workspaceSurfaceTitleChanged(
+                        workspaceID: workspace.id,
+                        surface: surfaceView,
+                        title: title
+                    )
+                }
+                .store(in: &workspace.subscriptions)
+
+            surfaceView.$pwd
+                .dropFirst()
+                .sink { [weak self, weak surfaceView] pwd in
+                    if let surfaceView {
+                        workspace.remoteSessions.removeValue(forKey: surfaceView.id)
+                    }
+                    self?.workspaceSurfaceLocationChanged(
+                        workspaceID: workspace.id,
+                        surface: surfaceView,
+                        location: pwd
+                    )
+                }
+                .store(in: &workspace.subscriptions)
+
+            surfaceView.$progressReport
+                .dropFirst()
+                .sink { [weak self] _ in
+                    self?.workspaceObservedActivity(workspaceID: workspace.id)
+                }
+                .store(in: &workspace.subscriptions)
+        }
+    }
+
+    private func workspaceObservedActivity(workspaceID: String, refreshSidebar: Bool = false) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        workspace.lastActivityAt = .now
+
+        if workspaceID == activeWorkspaceID {
+            setWorkspaceLastActivity(workspace.lastActivityAt)
+        }
+
+        if workspace.isInactive {
+            reactivateWorkspace(id: workspaceID, selectAfterReordering: false)
+        } else if refreshSidebar {
+            refreshWorkspaceSidebar()
+        }
+    }
+
+    private func workspaceSurfaceTitleChanged(
+        workspaceID: String,
+        surface: Ghostty.SurfaceView?,
+        title: String
+    ) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        if workspace.focusedSurface.value == nil {
+            workspace.focusedSurface.value = surface
+        }
+        if workspace.focusedSurface.value === surface {
+            workspace.computedTitle = title.isEmpty ? "👻" : title
+            if workspaceID == activeWorkspaceID {
+                setWorkspaceComputedTitle(workspace.computedTitle, notifySidebar: false)
+            }
+        }
+        workspaceObservedActivity(workspaceID: workspaceID, refreshSidebar: true)
+    }
+
+    private func workspaceSurfaceLocationChanged(
+        workspaceID: String,
+        surface: Ghostty.SurfaceView?,
+        location: String?
+    ) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        if workspace.focusedSurface.value == nil {
+            workspace.focusedSurface.value = surface
+        }
+        if workspace.focusedSurface.value === surface {
+            workspace.location = location
+            if workspaceID == activeWorkspaceID {
+                setWorkspaceDisplayLocation(location, notifySidebar: false)
+            }
+        }
+        workspaceObservedActivity(workspaceID: workspaceID, refreshSidebar: true)
     }
 
     private func fixTabBar() {
@@ -596,6 +1016,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // Call this last in case it uses any of the properties above.
         window.syncAppearance(surfaceConfig)
         terminalViewContainer?.ghosttyConfigDidChange(ghostty.config, preferredBackgroundColor: window.preferredBackgroundColor)
+        refreshWorkspaceSidebar()
     }
 
     /// Adjusts the given frame for the configured window position.
@@ -632,8 +1053,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
-        // More than 1 window means we have tabs and we're closing a tab
-        if window?.tabGroup?.windows.count ?? 0 > 1 {
+        // More than 1 workspace means we close only the selected workspace.
+        if workspaces.count > 1 {
             closeTab(nil)
             return
         }
@@ -643,124 +1064,64 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     func closeTabImmediately(registerRedo: Bool = true) {
-        guard let window = window else { return }
-        guard let tabGroup = window.tabGroup,
-                tabGroup.windows.count > 1 else {
+        syncActiveWorkspaceFromController()
+
+        guard workspaces.count > 1 else {
             closeWindowImmediately()
             return
         }
 
-        // Undo
-        if let undoManager, let undoState {
-            // Register undo action to restore the tab
-            undoManager.setActionName("Close Tab")
-            undoManager.registerUndo(
-                withTarget: ghostty,
-                expiresAfter: undoExpiration
-            ) { ghostty in
-                let newController = TerminalController(ghostty, with: undoState)
-
-                if registerRedo {
-                    undoManager.registerUndo(
-                        withTarget: newController,
-                        expiresAfter: newController.undoExpiration
-                    ) { target in
-                        target.closeTabImmediately()
-                    }
-                }
-            }
+        guard let currentIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else {
+            closeWindowImmediately()
+            return
         }
 
-        window.close()
+        let activeCount = workspaces.filter { !$0.isInactive }.count
+        let removedWorkspace = workspaces.remove(at: currentIndex)
+        removedWorkspace.subscriptions.removeAll()
+
+        guard !workspaces.isEmpty else {
+            closeWindowImmediately()
+            return
+        }
+
+        let nextIndex = min(currentIndex, workspaces.count - 1)
+        let fallbackActiveIndex = max(0, min(removedWorkspace.savedActiveIndex, activeCount - 2))
+        let replacementWorkspace = if let candidate = workspaces
+            .filter({ !$0.isInactive })
+            .dropFirst(fallbackActiveIndex)
+            .first {
+            candidate
+        } else if let candidate = workspaces.last(where: { !$0.isInactive }) {
+            candidate
+        } else {
+            workspaces[nextIndex]
+        }
+
+        activeWorkspaceID = replacementWorkspace.id
+        syncWorkspaceSavedActiveIndices()
+        restoreActiveWorkspaceState()
+        refreshWorkspaceSidebar()
     }
 
     private func closeOtherTabsImmediately() {
-        guard let window = window else { return }
-        guard let tabGroup = window.tabGroup else { return }
-        guard tabGroup.windows.count > 1 else { return }
-
-        // Start an undo grouping
-        if let undoManager {
-            undoManager.beginUndoGrouping()
-        }
-        defer {
-            undoManager?.endUndoGrouping()
-        }
-
-        // Iterate through all tabs except the current one.
-        for window in tabGroup.windows where window != self.window {
-            // We ignore any non-terminal tabs. They don't currently exist and we can't
-            // properly undo them anyways so I'd rather ignore them and get a bug report
-            // later if and when we introduce non-terminal tabs.
-            if let controller = window.windowController as? TerminalController {
-                // We must not register a redo, because it messes with our own redo
-                // that we register later.
-                controller.closeTabImmediately(registerRedo: false)
-            }
-        }
-
-        if let undoManager {
-            undoManager.setActionName("Close Other Tabs")
-
-            // We need to register an undo that refocuses this window. Otherwise, the
-            // undo operation above for each tab will steal focus.
-            undoManager.registerUndo(
-                withTarget: self,
-                expiresAfter: undoExpiration
-            ) { target in
-                DispatchQueue.main.async {
-                    target.window?.makeKeyAndOrderFront(nil)
-                }
-
-                // Register redo action
-                undoManager.registerUndo(
-                    withTarget: target,
-                    expiresAfter: target.undoExpiration
-                ) { target in
-                    target.closeOtherTabsImmediately()
-                }
-            }
-        }
+        syncActiveWorkspaceFromController()
+        workspaces = workspaces.filter { $0.id == activeWorkspaceID }
+        syncWorkspaceSavedActiveIndices()
+        refreshWorkspaceSidebar()
     }
 
     private func closeTabsOnTheRightImmediately() {
-        guard let window = window else { return }
-        guard let tabGroup = window.tabGroup else { return }
-        guard let currentIndex = tabGroup.windows.firstIndex(of: window) else { return }
+        syncActiveWorkspaceFromController()
+        guard let currentIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
+        guard currentIndex < workspaces.count - 1 else { return }
 
-        let tabsToClose = tabGroup.windows.enumerated().filter { $0.offset > currentIndex }
-        guard !tabsToClose.isEmpty else { return }
-
-        undoManager?.beginUndoGrouping()
-        defer {
-            undoManager?.endUndoGrouping()
+        for workspace in workspaces[(currentIndex + 1)...] {
+            workspace.subscriptions.removeAll()
         }
-
-        for (_, candidate) in tabsToClose {
-            if let controller = candidate.windowController as? TerminalController {
-                controller.closeTabImmediately(registerRedo: false)
-            }
-        }
-
-        if let undoManager {
-            undoManager.setActionName("Close Tabs to the Right")
-
-            undoManager.registerUndo(
-                withTarget: self,
-                expiresAfter: undoExpiration
-            ) { target in
-                DispatchQueue.main.async {
-                    target.window?.makeKeyAndOrderFront(nil)
-                }
-
-                undoManager.registerUndo(
-                    withTarget: target,
-                    expiresAfter: target.undoExpiration
-                ) { target in
-                    target.closeTabsOnTheRightImmediately()
-                }
-            }
-        }
+        workspaces.removeSubrange((currentIndex + 1)..<workspaces.count)
+        syncWorkspaceSavedActiveIndices()
+        refreshWorkspaceSidebar()
     }
 
     /// Closes the current window (including any other tabs) immediately and without
@@ -1012,6 +1373,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     override func windowDidLoad() {
         super.windowDidLoad()
         guard let window else { return }
+        window.tabbingMode = .disallowed
 
         // I copy this because we may change the source in the future but also because
         // I regularly audit our codebase for "ghostty.config" access because generally
@@ -1037,6 +1399,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // Initialize our content view to the SwiftUI root
         let container = TerminalViewContainer {
             TerminalView(ghostty: ghostty, viewModel: self, delegate: self)
+        }
+        container.onSidebarWidthChanged = { [weak self] width in
+            self?.workspaceSidebarWidth = width
         }
 
         // Set the initial content size on the container so that
@@ -1083,6 +1448,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // apply this based on the root config but change it later based on surface
         // config (see focused surface change callback).
         syncAppearance(.init(config))
+        configureWorkspaceSidebarActions()
+        refreshWorkspaceSidebarGroup()
     }
 
     /// Setup correct window frame before showing the window
@@ -1115,9 +1482,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     // Shows the "+" button in the tab bar, responds to that click.
     override func newWindowForTab(_ sender: Any?) {
-        // Trigger the ghostty core event logic for a new tab.
-        guard let surface = self.focusedSurface?.surface else { return }
-        ghostty.newTab(surface: surface)
+        _ = Self.newWorkspace(ghostty, from: window)
     }
 
     // MARK: NSWindowDelegate
@@ -1221,18 +1586,20 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     // MARK: First Responder
 
     @IBAction func newWindow(_ sender: Any?) {
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.newWindow(surface: surface)
+        _ = Self.newWorkspace(ghostty, from: window)
     }
 
     @IBAction func newTab(_ sender: Any?) {
-        guard let surface = focusedSurface?.surface else { return }
-        ghostty.newTab(surface: surface)
+        _ = Self.newWindow(ghostty)
+    }
+
+    @IBAction func toggleWorkspaceSidebar(_ sender: Any?) {
+        workspaceSidebarVisible.toggle()
+        refreshWorkspaceSidebar()
     }
 
     @IBAction func closeTab(_ sender: Any?) {
-        guard let window = window else { return }
-        guard window.tabGroup?.windows.count ?? 0 > 1 else {
+        guard workspaces.count > 1 else {
             closeWindow(sender)
             return
         }
@@ -1251,25 +1618,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction func closeOtherTabs(_ sender: Any?) {
-        guard let window = window else { return }
-        guard let tabGroup = window.tabGroup else { return }
+        guard workspaces.count > 1 else { return }
 
-        // If we only have one window then we have no other tabs to close
-        guard tabGroup.windows.count > 1 else { return }
+        syncActiveWorkspaceFromController()
+        let otherWorkspaces = workspaces.filter { $0.id != activeWorkspaceID }
+        guard !otherWorkspaces.isEmpty else { return }
 
-        // Check if we have to confirm close.
-        guard tabGroup.windows.contains(where: { window in
-            // Ignore ourself
-            if window == self.window { return false }
-
-            // Ignore non-terminals
-            guard let controller = window.windowController as? TerminalController else {
-                return false
-            }
-
-            // Check if any surfaces require confirmation
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
-        }) else {
+        guard otherWorkspaces.contains(where: { $0.tree.contains(where: { $0.needsConfirmQuit }) }) else {
             self.closeOtherTabsImmediately()
             return
         }
@@ -1283,20 +1638,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction func closeTabsOnTheRight(_ sender: Any?) {
-        guard let window = window else { return }
-        guard let tabGroup = window.tabGroup else { return }
-        guard let currentIndex = tabGroup.windows.firstIndex(of: window) else { return }
+        syncActiveWorkspaceFromController()
+        guard let currentIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
+        guard currentIndex < workspaces.count - 1 else { return }
 
-        let tabsToClose = tabGroup.windows.enumerated().filter { $0.offset > currentIndex }
-        guard !tabsToClose.isEmpty else { return }
-
-        let needsConfirm = tabsToClose.contains { (_, candidate) in
-            guard let controller = candidate.windowController as? TerminalController else {
-                return false
-            }
-
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
-        }
+        let tabsToClose = Array(workspaces[(currentIndex + 1)...])
+        let needsConfirm = tabsToClose.contains { $0.tree.contains(where: { $0.needsConfirmQuit }) }
 
         if !needsConfirm {
             self.closeTabsOnTheRightImmediately()
@@ -1317,23 +1664,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     @IBAction override func closeWindow(_ sender: Any?) {
-        guard let window = window else { return }
-
-        // We need to check all the windows in our tab group for confirmation
-        // if we're closing the window. If we don't have a tabgroup for any
-        // reason we check ourselves.
-        let windows: [NSWindow] = window.tabGroup?.windows ?? [window]
-        guard let confirmController = windows
-            .compactMap({ $0.windowController as? TerminalController })
-            .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })
-        else {
+        syncActiveWorkspaceFromController()
+        guard workspaces.contains(where: { $0.tree.contains(where: { $0.needsConfirmQuit }) }) else {
             closeWindowImmediately()
             return
         }
 
-        // We call confirmClose on the proper controller so the alert is
-        // attached to the window that needs confirmation.
-        confirmController.confirmClose(
+        confirmClose(
             messageText: "Close Window?",
             informativeText: "All terminal sessions in this window will be terminated.",
         ) {
@@ -1353,8 +1690,51 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     // MARK: - TerminalViewDelegate
 
+    override func handleLocalKeyDown(_ event: NSEvent) -> Bool {
+        guard window?.attachedSheet == nil else { return false }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let characters = event.charactersIgnoringModifiers?.lowercased()
+
+        if modifiers == [.command],
+           let characters,
+           let workspaceNumber = Int(characters),
+           (1...9).contains(workspaceNumber) {
+            syncActiveWorkspaceFromController()
+            let orderedWorkspaces = workspaces
+            guard orderedWorkspaces.indices.contains(workspaceNumber - 1) else { return true }
+            selectWorkspace(withID: orderedWorkspaces[workspaceNumber - 1].id)
+            return true
+        }
+
+        switch (modifiers, characters) {
+        case ([.command], "b"):
+            toggleWorkspaceSidebar(nil)
+            return true
+
+        case ([.command], "i"):
+            makeWorkspaceInactive(id: activeWorkspaceID, referenceDate: .now)
+            return true
+
+        case ([.command], "t"):
+            _ = Self.newWorkspace(ghostty, from: window)
+            return true
+
+        case ([.command, .shift], "n"):
+            _ = Self.newWindow(ghostty)
+            return true
+
+        default:
+            return false
+        }
+    }
+
     override func focusedSurfaceDidChange(to: Ghostty.SurfaceView?) {
         super.focusedSurfaceDidChange(to: to)
+        if !isApplyingWorkspaceState {
+            syncActiveWorkspaceFromController(rebuildObservers: true)
+            refreshWorkspaceSidebar()
+        }
 
         // We always cancel our event listener
         surfaceAppearanceCancellables.removeAll()
@@ -1388,102 +1768,69 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     @objc private func onMoveTab(notification: SwiftUI.Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard target == self.focusedSurface else { return }
-        guard let window = self.window else { return }
 
         // Get the move action
         guard let action = notification.userInfo?[Notification.Name.GhosttyMoveTabKey] as? Ghostty.Action.MoveTab else { return }
         guard action.amount != 0 else { return }
+        syncActiveWorkspaceFromController()
 
-        // Determine our current selected index
-        guard let windowController = window.windowController else { return }
-        guard let tabGroup = windowController.window?.tabGroup else { return }
-        guard let selectedWindow = tabGroup.selectedWindow else { return }
-        let tabbedWindows = tabGroup.windows
-        guard tabbedWindows.count > 0 else { return }
-        guard let selectedIndex = tabbedWindows.firstIndex(where: { $0 == selectedWindow }) else { return }
+        var activeWorkspaces = workspaces.filter { !$0.isInactive }
+        guard activeWorkspaces.count > 1 else { return }
+        guard let selectedIndex = activeWorkspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
 
         // Determine the final index we want to insert our tab
         let finalIndex: Int
         if action.amount < 0 {
             finalIndex = selectedIndex - min(selectedIndex, -action.amount)
         } else {
-            let remaining: Int = tabbedWindows.count - 1 - selectedIndex
+            let remaining = activeWorkspaces.count - 1 - selectedIndex
             finalIndex = selectedIndex + min(remaining, action.amount)
         }
 
         // If our index is the same we do nothing
         guard finalIndex != selectedIndex else { return }
 
-        // Get our target window
-        let targetWindow = tabbedWindows[finalIndex]
-
-        // Moving tabs on macOS 26 RC causes very nasty visual glitches in the titlebar tabs.
-        // I believe this is due to messed up constraints for our hacky tab bar. I'd like to
-        // find a better workaround. For now, this improves things dramatically.
-        //
-        // Reproduction: titlebar tabs, create two tabs, "move tab left"
-        if #available(macOS 26, *) {
-            if window is TitlebarTabsTahoeTerminalWindow {
-                tabGroup.removeWindow(selectedWindow)
-                targetWindow.addTabbedWindowSafely(selectedWindow, ordered: action.amount < 0 ? .below : .above)
-                DispatchQueue.main.async {
-                    selectedWindow.makeKey()
-                }
-
-                return
-            }
-        }
-
-        // Begin a group of window operations to minimize visual updates
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0
-
-        // Remove and re-add the window in the correct position
-        tabGroup.removeWindow(selectedWindow)
-        targetWindow.addTabbedWindowSafely(selectedWindow, ordered: action.amount < 0 ? .below : .above)
-
-        // Ensure our window remains selected
-        selectedWindow.makeKey()
-
-        NSAnimationContext.endGrouping()
+        let moving = activeWorkspaces.remove(at: selectedIndex)
+        activeWorkspaces.insert(moving, at: finalIndex)
+        let inactiveWorkspaces = workspaces.filter(\.isInactive)
+        workspaces = activeWorkspaces + inactiveWorkspaces
+        syncWorkspaceSavedActiveIndices()
+        refreshWorkspaceSidebar()
     }
 
     @objc private func onGotoTab(notification: SwiftUI.Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard target == self.focusedSurface else { return }
-        guard let window = self.window else { return }
 
         // Get the tab index from the notification
         guard let tabEnumAny = notification.userInfo?[Ghostty.Notification.GotoTabKey] else { return }
         guard let tabEnum = tabEnumAny as? ghostty_action_goto_tab_e else { return }
         let tabIndex: Int32 = tabEnum.rawValue
-
-        guard let windowController = window.windowController else { return }
-        guard let tabGroup = windowController.window?.tabGroup else { return }
-        let tabbedWindows = tabGroup.windows
+        syncActiveWorkspaceFromController()
+        let orderedWorkspaces = workspaces
+        guard !orderedWorkspaces.isEmpty else { return }
 
         // This will be the index we want to actual go to
         let finalIndex: Int
 
         // An index that is invalid is used to signal some special values.
         if tabIndex <= 0 {
-            guard let selectedWindow = tabGroup.selectedWindow else { return }
-            guard let selectedIndex = tabbedWindows.firstIndex(where: { $0 == selectedWindow }) else { return }
+            guard let selectedIndex = orderedWorkspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
 
             if tabIndex == GHOSTTY_GOTO_TAB_PREVIOUS.rawValue {
                 if selectedIndex == 0 {
-                    finalIndex = tabbedWindows.count - 1
+                    finalIndex = orderedWorkspaces.count - 1
                 } else {
                     finalIndex = selectedIndex - 1
                 }
             } else if tabIndex == GHOSTTY_GOTO_TAB_NEXT.rawValue {
-                if selectedIndex == tabbedWindows.count - 1 {
+                if selectedIndex == orderedWorkspaces.count - 1 {
                     finalIndex = 0
                 } else {
                     finalIndex = selectedIndex + 1
                 }
             } else if tabIndex == GHOSTTY_GOTO_TAB_LAST.rawValue {
-                finalIndex = tabbedWindows.count - 1
+                finalIndex = orderedWorkspaces.count - 1
             } else {
                 return
             }
@@ -1492,12 +1839,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             guard tabIndex >= 1 else { return }
 
             // If our index is outside our boundary then we use the max
-            finalIndex = min(Int(tabIndex - 1), tabbedWindows.count - 1)
+            finalIndex = min(Int(tabIndex - 1), orderedWorkspaces.count - 1)
         }
 
         guard finalIndex >= 0 else { return }
-        let targetWindow = tabbedWindows[finalIndex]
-        targetWindow.makeKeyAndOrderFront(nil)
+        selectWorkspace(withID: orderedWorkspaces[finalIndex].id)
     }
 
     @objc private func onCloseTab(notification: SwiftUI.Notification) {
@@ -1581,9 +1927,8 @@ extension TerminalController {
     override func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(closeTabsOnTheRight):
-            guard let window, let tabGroup = window.tabGroup else { return false }
-            guard let currentIndex = tabGroup.windows.firstIndex(of: window) else { return false }
-            return tabGroup.windows.indices.contains { $0 > currentIndex }
+            guard let currentIndex = workspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return false }
+            return currentIndex < workspaces.count - 1
 
         case #selector(returnToDefaultSize):
             guard let window else { return false }

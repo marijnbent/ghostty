@@ -43,6 +43,14 @@ class TerminalWindow: NSWindow {
         delegate: self
     )
 
+    /// True when the custom workspace sidebar is active and native tab UI should stay hidden.
+    var workspaceSidebarActive: Bool = false {
+        didSet {
+            guard workspaceSidebarActive != oldValue else { return }
+            syncWorkspaceSidebarMode()
+        }
+    }
+
     /// Whether this window supports the update accessory. If this is false, then views within this
     /// window should determine how to show update notifications.
     var supportsUpdateAccessory: Bool {
@@ -248,6 +256,11 @@ class TerminalWindow: NSWindow {
     }
 
     override func addTitlebarAccessoryViewController(_ childViewController: NSTitlebarAccessoryViewController) {
+        if workspaceSidebarActive && isTabBar(childViewController) {
+            childViewController.identifier = Self.tabBarIdentifier
+            return
+        }
+
         super.addTitlebarAccessoryViewController(childViewController)
 
         // Tab bar is attached as a titlebar accessory view controller (layout bottom). We
@@ -321,6 +334,19 @@ class TerminalWindow: NSWindow {
                 addTitlebarAccessoryViewController(resetZoomAccessory)
             }
         }
+    }
+
+    func syncWorkspaceSidebarMode() {
+        if workspaceSidebarActive {
+            for index in titlebarAccessoryViewControllers.indices.reversed() {
+                guard let childViewController = titlebarAccessoryViewControllers[safe: index],
+                      isTabBar(childViewController)
+                else { continue }
+                super.removeTitlebarAccessoryViewController(at: index)
+            }
+        }
+
+        tabBarView?.isHidden = workspaceSidebarActive
     }
 
     // MARK: Tab Key Equivalents

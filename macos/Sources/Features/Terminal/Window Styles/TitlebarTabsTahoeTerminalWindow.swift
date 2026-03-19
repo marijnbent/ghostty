@@ -57,7 +57,12 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
 
         // Check if we have a tab bar and set it up if we have to. See the comment
         // on this function to learn why we need to check this here.
-        setupTabBar()
+        if workspaceSidebarActive {
+            removeTabBar()
+            tabBarView?.isHidden = true
+        } else {
+            setupTabBar()
+        }
 
         viewModel.isMainWindow = true
     }
@@ -113,6 +118,11 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
             viewModel.hasTabBar = false
 
             super.addTitlebarAccessoryViewController(childViewController)
+            return
+        }
+
+        if workspaceSidebarActive {
+            viewModel.hasTabBar = false
             return
         }
 
@@ -176,6 +186,8 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
     ///
     /// There are more scenarios to look out for and they're documented within the method.
     func setupTabBar() {
+        guard !workspaceSidebarActive else { return }
+
         // We only want to setup the observer once
         guard tabBarObserver == nil else { return }
 
@@ -259,6 +271,18 @@ class TitlebarTabsTahoeTerminalWindow: TransparentTitlebarTerminalWindow, NSTool
 
         // Clear our observations
         self.tabBarObserver = nil
+    }
+
+    override func syncWorkspaceSidebarMode() {
+        super.syncWorkspaceSidebarMode()
+
+        if workspaceSidebarActive {
+            tabBarView?.isHidden = true
+            removeTabBar()
+        } else {
+            tabBarView?.isHidden = false
+            setupTabBar()
+        }
     }
 
     // MARK: NSToolbarDelegate

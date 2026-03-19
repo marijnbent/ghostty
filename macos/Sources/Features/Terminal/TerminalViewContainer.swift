@@ -5,10 +5,19 @@ import SwiftUI
 /// Modifying `NSThemeFrame` can sometimes be unpredictable.
 class TerminalViewContainer: NSView {
     private let terminalView: NSView
+    private let sidebarView = NSHostingView(rootView: AnyView(EmptyView()))
+    private let sidebarDivider = NSBox()
+    private let sidebarResizeHandle = SidebarResizeHandleView()
+    private var sidebarWidthConstraint: NSLayoutConstraint?
+    private var sidebarLeadingConstraint: NSLayoutConstraint?
+    private var terminalLeadingConstraint: NSLayoutConstraint?
+    private let minSidebarWidth: CGFloat = 180
+    private let maxSidebarWidth: CGFloat = 420
 
     /// Combined glass effect and inactive tint overlay view
     private(set) var glassEffectView: NSView?
     private var derivedConfig: DerivedConfig?
+    var onSidebarWidthChanged: ((CGFloat) -> Void)?
 
     var windowThemeFrameView: NSView? {
         window?.contentView?.superview
@@ -53,14 +62,58 @@ class TerminalViewContainer: NSView {
     }
 
     private func setup() {
+        sidebarView.translatesAutoresizingMaskIntoConstraints = false
+        sidebarView.isHidden = true
+
+        sidebarDivider.translatesAutoresizingMaskIntoConstraints = false
+        sidebarDivider.boxType = .custom
+        sidebarDivider.borderType = .noBorder
+        sidebarDivider.fillColor = .separatorColor
+        sidebarDivider.isHidden = true
+
+        sidebarResizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        sidebarResizeHandle.isHidden = true
+        sidebarResizeHandle.currentWidth = { [weak self] in
+            self?.sidebarWidthConstraint?.constant ?? 240
+        }
+        sidebarResizeHandle.onResize = { [weak self] width in
+            self?.setSidebarWidth(width, notify: true)
+        }
+
+        addSubview(sidebarView)
+        addSubview(sidebarDivider)
+        addSubview(sidebarResizeHandle)
         addSubview(terminalView)
         terminalView.translatesAutoresizingMaskIntoConstraints = false
+
+        sidebarWidthConstraint = sidebarView.widthAnchor.constraint(equalToConstant: 240)
+        sidebarLeadingConstraint = terminalView.leadingAnchor.constraint(equalTo: leadingAnchor)
+        terminalLeadingConstraint = terminalView.leadingAnchor.constraint(equalTo: sidebarDivider.trailingAnchor)
+
         NSLayoutConstraint.activate([
+            sidebarView.topAnchor.constraint(equalTo: topAnchor),
+            sidebarView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sidebarView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            sidebarWidthConstraint!,
+
+            sidebarDivider.topAnchor.constraint(equalTo: topAnchor),
+            sidebarDivider.leadingAnchor.constraint(equalTo: sidebarView.trailingAnchor),
+            sidebarDivider.bottomAnchor.constraint(equalTo: bottomAnchor),
+            sidebarDivider.widthAnchor.constraint(equalToConstant: 1),
+
+            sidebarResizeHandle.topAnchor.constraint(equalTo: topAnchor),
+            sidebarResizeHandle.centerXAnchor.constraint(equalTo: sidebarDivider.centerXAnchor),
+            sidebarResizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
+            sidebarResizeHandle.widthAnchor.constraint(equalToConstant: 12),
+
             terminalView.topAnchor.constraint(equalTo: topAnchor),
-            terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            sidebarLeadingConstraint!,
+            terminalLeadingConstraint!,
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
+
+        terminalLeadingConstraint?.isActive = false
     }
 
     override func viewDidMoveToWindow() {
@@ -79,6 +132,75 @@ class TerminalViewContainer: NSView {
         guard newValue != derivedConfig else { return }
         derivedConfig = newValue
         DispatchQueue.main.async(execute: updateGlassEffectIfNeeded)
+    }
+
+    func updateWorkspaceSidebar(rootView: AnyView?, width: CGFloat = 240) {
+        let hasSidebar = rootView != nil
+        sidebarView.rootView = rootView ?? AnyView(EmptyView())
+        sidebarView.isHidden = !hasSidebar
+        sidebarDivider.isHidden = !hasSidebar
+        sidebarResizeHandle.isHidden = !hasSidebar
+        setSidebarWidth(hasSidebar ? width : 0, notify: false)
+        sidebarLeadingConstraint?.isActive = !hasSidebar
+        terminalLeadingConstraint?.isActive = hasSidebar
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+    }
+
+    func updateWorkspaceSidebarDividerColor(_ color: NSColor) {
+        sidebarDivider.fillColor = color
+    }
+
+    private func setSidebarWidth(_ width: CGFloat, notify: Bool) {
+        let clampedWidth = if width <= 0 {
+            CGFloat.zero
+        } else {
+            min(max(width, minSidebarWidth), maxSidebarWidth)
+        }
+
+        sidebarWidthConstraint?.constant = clampedWidth
+
+        if notify, clampedWidth > 0 {
+            onSidebarWidthChanged?(clampedWidth)
+        }
+    }
+}
+
+private final class SidebarResizeHandleView: NSView {
+    var onResize: ((CGFloat) -> Void)?
+    var currentWidth: (() -> CGFloat)?
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        let initialLocation = event.locationInWindow.x
+        let initialWidth = currentWidth?() ?? 240
+
+        window.trackEvents(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            timeout: .greatestFiniteMagnitude,
+            mode: .eventTracking
+        ) { [weak self] trackedEvent, stop in
+            guard let trackedEvent else {
+                stop.pointee = true
+                return
+            }
+
+            guard let self else {
+                stop.pointee = true
+                return
+            }
+
+            let delta = trackedEvent.locationInWindow.x - initialLocation
+            onResize?(initialWidth + delta)
+
+            if trackedEvent.type == .leftMouseUp {
+                stop.pointee = true
+            }
+        }
     }
 }
 

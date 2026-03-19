@@ -314,6 +314,7 @@ class AppDelegate: NSObject,
 
         // Setup signal handlers
         setupSignals()
+        WorkspaceSidebarMonitor.shared.start()
 
         switch Ghostty.launchSource {
         case .app:
@@ -954,14 +955,14 @@ class AppDelegate: NSObject,
     }
 
     @IBAction func newWindow(_ sender: Any?) {
-        _ = TerminalController.newWindow(ghostty)
-    }
-
-    @IBAction func newTab(_ sender: Any?) {
-        _ = TerminalController.newTab(
+        _ = TerminalController.newWorkspace(
             ghostty,
             from: TerminalController.preferredParent?.window
         )
+    }
+
+    @IBAction func newTab(_ sender: Any?) {
+        _ = TerminalController.newWindow(ghostty)
     }
 
     @IBAction func closeAllWindows(_ sender: Any?) {
@@ -1091,8 +1092,8 @@ extension AppDelegate {
     }
 
     private func reloadDockMenu() {
-        let newWindow = NSMenuItem(title: "New Window", action: #selector(newWindow), keyEquivalent: "")
-        let newTab = NSMenuItem(title: "New Tab", action: #selector(newTab), keyEquivalent: "")
+        let newWindow = NSMenuItem(title: "New Workspace", action: #selector(newWindow), keyEquivalent: "")
+        let newTab = NSMenuItem(title: "New Window", action: #selector(newTab), keyEquivalent: "")
 
         dockMenu.removeAllItems()
         dockMenu.addItem(newWindow)
@@ -1213,6 +1214,21 @@ extension AppDelegate {
 
         // Dock menu
         reloadDockMenu()
+        applyWorkspaceMenuOverrides()
+    }
+
+    private func applyWorkspaceMenuOverrides() {
+        menuNewWindow?.title = "New Workspace"
+        menuNewWindow?.keyEquivalent = "n"
+        menuNewWindow?.keyEquivalentModifierMask = [.command]
+
+        menuNewTab?.title = "New Window"
+        menuNewTab?.keyEquivalent = "n"
+        menuNewTab?.keyEquivalentModifierMask = [.command, .shift]
+
+        menuChangeTabTitle?.title = "Rename Workspace…"
+        menuChangeTabTitle?.keyEquivalent = "R"
+        menuChangeTabTitle?.keyEquivalentModifierMask = [.command, .shift]
     }
 
     /// Syncs a single menu shortcut for the given action. The action string is the same

@@ -41,6 +41,19 @@ class TitlebarTabsVenturaTerminalWindow: TerminalWindow {
         titlebarColor = derivedConfig.backgroundColor.withAlphaComponent(derivedConfig.backgroundOpacity)
     }
 
+    override func syncWorkspaceSidebarMode() {
+        super.syncWorkspaceSidebarMode()
+
+        titlebarTabs = !workspaceSidebarActive
+        if workspaceSidebarActive {
+            resetCustomTabBarViews()
+            tabBarView?.isHidden = true
+        } else {
+            tabBarView?.isHidden = false
+            updateTabBar()
+        }
+    }
+
     // We only need to set this once, but need to do it after the window has been created in order
     // to determine if the theme is using a very dark background, in which case we don't want to
     // remove the effect view if the default tab bar is being used since the effect created in
