@@ -62,6 +62,9 @@ extension Ghostty {
             }
         }
 
+        // Whether the shell has reported that a command is currently running.
+        @Published var isCommandRunning: Bool = false
+
         // The currently active key sequence. The sequence is not active if this is empty.
         @Published var keySequence: [KeyboardShortcut] = []
 

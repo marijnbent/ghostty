@@ -758,6 +758,7 @@ pub const Application = extern struct {
             .toggle_split_zoom => return Action.toggleSplitZoom(target),
             .show_on_screen_keyboard => return Action.showOnScreenKeyboard(target),
             .command_finished => return Action.commandFinished(target, value),
+            .command_running => return Action.commandRunning(target, value),
             .readonly => return Action.setReadonly(target, value),
 
             .start_search => Action.startSearch(target, value),
@@ -2766,6 +2767,13 @@ const Action = struct {
                 return surface.rt_surface.gobj().commandFinished(value);
             },
         }
+    }
+
+    pub fn commandRunning(target: apprt.Target, _: apprt.Action.Value(.command_running)) bool {
+        return switch (target) {
+            .app => false,
+            .surface => true,
+        };
     }
 
     pub fn setReadonly(target: apprt.Target, value: apprt.Action.Value(.readonly)) bool {

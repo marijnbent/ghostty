@@ -394,6 +394,11 @@ class BaseTerminalController: NSWindowController,
         }
 
         setupWorkspaceActivityObservers()
+        focusedSurfaceDidChange(to: focusedSurface)
+    }
+
+    func shouldTrackFocusedSurfaceTitle() -> Bool {
+        true
     }
 
     /// Update all surfaces with the focus state. This ensures that libghostty has an accurate view about
@@ -956,12 +961,14 @@ class BaseTerminalController: NSWindowController,
                 }
                 .store(in: &focusedSurfaceCancellables)
 
-            // If we have a surface, we want to listen for title changes.
-            titleSurface.$title
-                .combineLatest(titleSurface.$bell)
-                .map { [weak self] in self?.computeTitle(title: $0, bell: $1) ?? "" }
-                .sink { [weak self] in self?.titleDidChange(to: $0) }
-                .store(in: &focusedSurfaceCancellables)
+            if shouldTrackFocusedSurfaceTitle() {
+                // If we have a surface, we want to listen for title changes.
+                titleSurface.$title
+                    .combineLatest(titleSurface.$bell)
+                    .map { [weak self] in self?.computeTitle(title: $0, bell: $1) ?? "" }
+                    .sink { [weak self] in self?.titleDidChange(to: $0) }
+                    .store(in: &focusedSurfaceCancellables)
+            }
 
             titleSurface.$pwd
                 .sink { [weak self] pwd in

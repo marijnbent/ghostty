@@ -1112,14 +1112,30 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
 
         .start_command => {
             self.command_timer = try .now();
+            _ = self.rt_app.performAction(
+                .{ .surface = self },
+                .command_running,
+                true,
+            ) catch |err| {
+                log.warn("apprt failed to notify command start={}", .{err});
+            };
         },
 
         .stop_command => |v| timer: {
-            const end: std.time.Instant = try .now();
-            const start = self.command_timer orelse break :timer;
+            const start = self.command_timer;
             self.command_timer = null;
+            _ = self.rt_app.performAction(
+                .{ .surface = self },
+                .command_running,
+                false,
+            ) catch |err| {
+                log.warn("apprt failed to notify command stop={}", .{err});
+            };
 
-            const duration: Duration = .{ .duration = end.since(start) };
+            const start_ = start orelse break :timer;
+            const end: std.time.Instant = try .now();
+
+            const duration: Duration = .{ .duration = end.since(start_) };
             log.debug("command took {f}", .{duration});
 
             _ = self.rt_app.performAction(
@@ -1202,6 +1218,14 @@ fn selectionScrollTick(self: *Surface) !void {
 fn childExited(self: *Surface, info: apprt.surface.Message.ChildExited) void {
     // Mark our flag that we exited immediately
     self.child_exited = true;
+    self.command_timer = null;
+    _ = self.rt_app.performAction(
+        .{ .surface = self },
+        .command_running,
+        false,
+    ) catch |err| {
+        log.warn("apprt failed to notify command stop after child exit={}", .{err});
+    };
 
     // If our runtime was below some threshold then we assume that this
     // was an abnormal exit and we show an error message.

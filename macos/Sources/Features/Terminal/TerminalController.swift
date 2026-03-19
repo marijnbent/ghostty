@@ -4,6 +4,78 @@ import SwiftUI
 import Combine
 import GhosttyKit
 
+struct WorkspaceCloseSelectionEntry: Equatable {
+    let id: String
+    let isInactive: Bool
+}
+
+enum WorkspaceSelectionHistory {
+    static func recordingSelection(_ history: [String], workspaceID: String) -> [String] {
+        history.filter { $0 != workspaceID } + [workspaceID]
+    }
+
+    static func pruned(_ history: [String], validWorkspaceIDs: Set<String>) -> [String] {
+        history.filter { validWorkspaceIDs.contains($0) }
+    }
+}
+
+enum WorkspaceAutomaticTitleTracking {
+    static func shouldTrackComputedTitle(leafCount: Int) -> Bool {
+        leafCount <= 1
+    }
+}
+
+enum WorkspaceCloseSelection {
+    static func replacementID(
+        in workspaces: [WorkspaceCloseSelectionEntry],
+        closingID: String,
+        activeWorkspaceID: String,
+        previousWorkspaceID: String?,
+        selectionHistory: [String]
+    ) -> String? {
+        let remaining = workspaces.filter { $0.id != closingID }
+        guard !remaining.isEmpty else { return nil }
+
+        let remainingByID = Dictionary(uniqueKeysWithValues: remaining.map { ($0.id, $0) })
+        if closingID == activeWorkspaceID {
+            if let previousWorkspaceID,
+               previousWorkspaceID != closingID,
+               let candidate = remainingByID[previousWorkspaceID],
+               !candidate.isInactive {
+                return candidate.id
+            }
+
+            for workspaceID in selectionHistory.reversed() {
+                guard workspaceID != closingID else { continue }
+                guard let candidate = remainingByID[workspaceID], !candidate.isInactive else { continue }
+                return candidate.id
+            }
+        }
+
+        let activeWorkspaces = workspaces.filter { !$0.isInactive }
+        if let closingActiveIndex = activeWorkspaces.firstIndex(where: { $0.id == closingID }) {
+            if closingActiveIndex > 0 {
+                return activeWorkspaces[closingActiveIndex - 1].id
+            }
+
+            if closingActiveIndex + 1 < activeWorkspaces.count {
+                return activeWorkspaces[closingActiveIndex + 1].id
+            }
+        }
+
+        if let firstActive = remaining.first(where: { !$0.isInactive }) {
+            return firstActive.id
+        }
+
+        guard let closingIndex = workspaces.firstIndex(where: { $0.id == closingID }) else {
+            return remaining.first?.id
+        }
+
+        let fallbackIndex = min(closingIndex, remaining.count - 1)
+        return remaining[fallbackIndex].id
+    }
+}
+
 /// A classic, tabbed terminal experience.
 class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Controller {
     @MainActor
@@ -20,6 +92,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         var isInactive: Bool = false
         var savedActiveIndex: Int = 0
         var subscriptions: Set<AnyCancellable> = []
+
+        var hasRunningCommand: Bool {
+            tree.contains { $0.isCommandRunning }
+        }
 
         init(
             id: String = UUID().uuidString,
@@ -101,6 +177,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     private let workspaceSidebarViewModel = WorkspaceSidebarViewModel()
     private var workspaces: [WorkspaceState] = []
     private var activeWorkspaceID: String
+    private var workspaceSelectionHistory: [String] = []
+    private var previousActiveWorkspaceID: String?
     private var isApplyingWorkspaceState: Bool = false
     private var workspaceSidebarVisible: Bool = true
     private var workspaceSidebarWidth: CGFloat = 248
@@ -132,6 +210,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         self.workspaces[0].remoteSessions = self.workspaceRemoteSessions
         self.workspaces[0].lastActivityAt = self.workspaceLastActivityAt
         self.workspaces[0].savedActiveIndex = 0
+        self.workspaceSelectionHistory = WorkspaceSelectionHistory.recordingSelection([], workspaceID: initialWorkspaceID)
+        self.previousActiveWorkspaceID = nil
         rebuildWorkspaceObservers(for: self.workspaces[0])
 
         // Setup our notifications for behaviors
@@ -229,6 +309,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         syncActiveWorkspaceFromController(rebuildObservers: true)
         refreshWorkspaceSidebar()
+    }
+
+    override func shouldTrackFocusedSurfaceTitle() -> Bool {
+        WorkspaceAutomaticTitleTracking.shouldTrackComputedTitle(leafCount: surfaceTree.count)
     }
 
     override func replaceSurfaceTree(
@@ -499,8 +583,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         workspaceSidebarViewModel.selectWorkspace = { [weak self] id in
             self?.selectWorkspace(withID: id)
         }
-        workspaceSidebarViewModel.moveWorkspace = { [weak self] sourceID, targetID in
-            self?.moveWorkspace(sourceID: sourceID, before: targetID)
+        workspaceSidebarViewModel.moveWorkspace = { [weak self] sourceID, insertionIndex in
+            self?.moveWorkspace(sourceID: sourceID, toActiveInsertionIndex: insertionIndex)
         }
         workspaceSidebarViewModel.renameSelectedWorkspace = { [weak self] in
             self?.promptTabTitle()
@@ -597,6 +681,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                 title: workspaceDisplayTitle(for: workspace),
                 subtitle: workspaceDisplayLocation(for: workspace),
                 remoteSessionLabel: workspace.remoteSessionKind()?.badgeLabel,
+                hasRunningCommand: workspace.hasRunningCommand,
                 isSelected: workspace.id == activeWorkspaceID,
                 isInactive: workspace.isInactive
             )
@@ -687,8 +772,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
+        let previousWorkspaceID = activeWorkspaceID
         syncActiveWorkspaceFromController()
         activeWorkspaceID = workspaceID
+        previousActiveWorkspaceID = previousWorkspaceID
+        recordWorkspaceSelection(workspaceID)
         restoreActiveWorkspaceState()
         refreshWorkspaceSidebar()
     }
@@ -705,23 +793,25 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         recordWorkspaceUserActivity()
     }
 
-    private func moveWorkspace(sourceID: String, before targetID: String?) {
+    private func moveWorkspace(sourceID: String, toActiveInsertionIndex insertionIndex: Int) {
         syncActiveWorkspaceFromController()
         guard workspaces.count > 1 else { return }
 
         var active = workspaces.filter { !$0.isInactive }
         let inactive = workspaces.filter(\.isInactive)
         guard let sourceIndex = active.firstIndex(where: { $0.id == sourceID }) else { return }
-        let moving = active.remove(at: sourceIndex)
-
-        let targetIndex = if let targetID,
-            let index = active.firstIndex(where: { $0.id == targetID }) {
-            index
-        } else {
-            active.endIndex
+        let activeCount = active.count
+        guard let destinationIndex = WorkspaceSidebarReorderDestination.destinationIndex(
+            sourceIndex: sourceIndex,
+            proposedInsertionIndex: insertionIndex,
+            itemCount: activeCount
+        ) else {
+            refreshWorkspaceSidebar()
+            return
         }
 
-        active.insert(moving, at: min(targetIndex, active.count))
+        let moving = active.remove(at: sourceIndex)
+        active.insert(moving, at: min(destinationIndex, active.count))
         workspaces = active + inactive
         syncWorkspaceSavedActiveIndices()
         refreshWorkspaceSidebar()
@@ -811,6 +901,30 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         for (index, workspace) in activeWorkspaces.enumerated() {
             workspace.savedActiveIndex = index
         }
+    }
+
+    private func pruneWorkspaceSelectionHistory() {
+        workspaceSelectionHistory = WorkspaceSelectionHistory.pruned(
+            workspaceSelectionHistory,
+            validWorkspaceIDs: Set(workspaces.map(\.id))
+        )
+        if let previousActiveWorkspaceID,
+           workspaces.contains(where: { $0.id == previousActiveWorkspaceID }) {
+            return
+        }
+
+        previousActiveWorkspaceID = workspaceSelectionHistory.last(where: { $0 != activeWorkspaceID })
+    }
+
+    private func recordWorkspaceSelection(_ workspaceID: String) {
+        workspaceSelectionHistory = WorkspaceSelectionHistory.recordingSelection(
+            workspaceSelectionHistory,
+            workspaceID: workspaceID
+        )
+    }
+
+    private func workspaceCloseSelectionEntries() -> [WorkspaceCloseSelectionEntry] {
+        workspaces.map { .init(id: $0.id, isInactive: $0.isInactive) }
     }
 
     private func syncActiveWorkspaceFromController(rebuildObservers: Bool = false) {
@@ -911,6 +1025,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                     self?.workspaceObservedActivity(workspaceID: workspace.id)
                 }
                 .store(in: &workspace.subscriptions)
+
+            surfaceView.$isCommandRunning
+                .dropFirst()
+                .sink { [weak self] _ in
+                    self?.refreshWorkspaceSidebar()
+                }
+                .store(in: &workspace.subscriptions)
         }
     }
 
@@ -938,7 +1059,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         if workspace.focusedSurface.value == nil {
             workspace.focusedSurface.value = surface
         }
-        if workspace.focusedSurface.value === surface {
+        if workspace.focusedSurface.value === surface &&
+            WorkspaceAutomaticTitleTracking.shouldTrackComputedTitle(leafCount: workspace.tree.count) {
             workspace.computedTitle = title.isEmpty ? "👻" : title
             if workspaceID == activeWorkspaceID {
                 setWorkspaceComputedTitle(workspace.computedTitle, notifySidebar: false)
@@ -1076,29 +1198,36 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
-        let activeCount = workspaces.filter { !$0.isInactive }.count
+        let closeSelectionEntries = workspaceCloseSelectionEntries()
+        let previousWorkspaceID = previousActiveWorkspaceID
         let removedWorkspace = workspaces.remove(at: currentIndex)
         removedWorkspace.subscriptions.removeAll()
+        pruneWorkspaceSelectionHistory()
 
         guard !workspaces.isEmpty else {
             closeWindowImmediately()
             return
         }
 
-        let nextIndex = min(currentIndex, workspaces.count - 1)
-        let fallbackActiveIndex = max(0, min(removedWorkspace.savedActiveIndex, activeCount - 2))
-        let replacementWorkspace = if let candidate = workspaces
-            .filter({ !$0.isInactive })
-            .dropFirst(fallbackActiveIndex)
-            .first {
-            candidate
-        } else if let candidate = workspaces.last(where: { !$0.isInactive }) {
-            candidate
-        } else {
-            workspaces[nextIndex]
+        let replacementWorkspaceID = WorkspaceCloseSelection.replacementID(
+            in: closeSelectionEntries,
+            closingID: removedWorkspace.id,
+            activeWorkspaceID: removedWorkspace.id,
+            previousWorkspaceID: previousWorkspaceID,
+            selectionHistory: workspaceSelectionHistory
+        )
+
+        guard
+            let replacementWorkspaceID,
+            let replacementWorkspace = workspaces.first(where: { $0.id == replacementWorkspaceID })
+        else {
+            closeWindowImmediately()
+            return
         }
 
         activeWorkspaceID = replacementWorkspace.id
+        recordWorkspaceSelection(replacementWorkspace.id)
+        previousActiveWorkspaceID = workspaceSelectionHistory.last(where: { $0 != replacementWorkspace.id })
         syncWorkspaceSavedActiveIndices()
         restoreActiveWorkspaceState()
         refreshWorkspaceSidebar()
@@ -1107,6 +1236,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     private func closeOtherTabsImmediately() {
         syncActiveWorkspaceFromController()
         workspaces = workspaces.filter { $0.id == activeWorkspaceID }
+        pruneWorkspaceSelectionHistory()
         syncWorkspaceSavedActiveIndices()
         refreshWorkspaceSidebar()
     }
@@ -1120,6 +1250,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             workspace.subscriptions.removeAll()
         }
         workspaces.removeSubrange((currentIndex + 1)..<workspaces.count)
+        pruneWorkspaceSelectionHistory()
         syncWorkspaceSavedActiveIndices()
         refreshWorkspaceSidebar()
     }

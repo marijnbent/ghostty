@@ -650,6 +650,9 @@ extension Ghostty {
             case GHOSTTY_ACTION_COMMAND_FINISHED:
                 commandFinished(app, target: target, v: action.action.command_finished)
 
+            case GHOSTTY_ACTION_COMMAND_RUNNING:
+                setCommandRunning(app, target: target, v: action.action.command_running)
+
             case GHOSTTY_ACTION_PRESENT_TERMINAL:
                 return presentTerminal(app, target: target)
 
@@ -1479,6 +1482,26 @@ extension Ghostty {
                         requireFocus: false
                     )
                 }
+
+            default:
+                assertionFailure()
+            }
+        }
+
+        private static func setCommandRunning(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            v: Bool
+        ) {
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                Ghostty.logger.warning("command running does nothing with an app target")
+                return
+
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return }
+                guard let surfaceView = self.surfaceView(from: surface) else { return }
+                surfaceView.isCommandRunning = v
 
             default:
                 assertionFailure()

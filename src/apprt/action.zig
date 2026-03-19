@@ -343,6 +343,9 @@ pub const Action = union(Key) {
     /// otherwise the terminal-set title.
     copy_title_to_clipboard,
 
+    /// Whether a shell command is currently running in the target surface.
+    command_running: bool,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -410,6 +413,7 @@ pub const Action = union(Key) {
         search_selected,
         readonly,
         copy_title_to_clipboard,
+        command_running,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
@@ -425,7 +429,14 @@ pub const Action = union(Key) {
             const Type = t: {
                 const Type = @TypeOf(@field(action, field.name));
                 // Types can provide custom types for their CValue.
-                if (Type != void and @hasDecl(Type, "C")) break :t Type.C;
+                if (Type != void) switch (@typeInfo(Type)) {
+                    .@"struct",
+                    .@"union",
+                    .@"enum",
+                    .@"opaque",
+                    => if (@hasDecl(Type, "C")) break :t Type.C,
+                    else => {},
+                };
                 break :t Type;
             };
 
@@ -474,11 +485,18 @@ pub const Action = union(Key) {
     /// Convert to ghostty_action_s.
     pub fn cval(self: Action) C {
         const value: CValue = switch (self) {
-            inline else => |v, tag| @unionInit(
-                CValue,
-                @tagName(tag),
-                if (@TypeOf(v) != void and @hasDecl(@TypeOf(v), "cval")) v.cval() else v,
-            ),
+            inline else => |v, tag| @unionInit(CValue, @tagName(tag), cval: {
+                const Type = @TypeOf(v);
+                if (Type != void) switch (@typeInfo(Type)) {
+                    .@"struct",
+                    .@"union",
+                    .@"enum",
+                    .@"opaque",
+                    => if (@hasDecl(Type, "cval")) break :cval v.cval(),
+                    else => {},
+                };
+                break :cval v;
+            }),
         };
 
         return .{
