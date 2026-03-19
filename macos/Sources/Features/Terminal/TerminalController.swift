@@ -25,6 +25,59 @@ enum WorkspaceAutomaticTitleTracking {
     }
 }
 
+enum WorkspaceTitlePresentation {
+    static func displayTitle(
+        titleOverride: String?,
+        computedTitle: String,
+        location: String?
+    ) -> String {
+        if let titleOverride, !titleOverride.isEmpty {
+            return titleOverride
+        }
+
+        let trimmedTitle = computedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return "Workspace" }
+
+        let withoutHostPrefix = stripHostPrefix(from: trimmedTitle)
+        if let shortenedPathTitle = shortenPathLikeTitle(withoutHostPrefix, location: location) {
+            return shortenedPathTitle
+        }
+
+        return withoutHostPrefix
+    }
+
+    private static func stripHostPrefix(from title: String) -> String {
+        guard let separatorIndex = title.lastIndex(of: ":") else { return title }
+        let prefix = title[..<separatorIndex]
+        guard prefix.contains("@") else { return title }
+
+        let suffixStart = title.index(after: separatorIndex)
+        let suffix = title[suffixStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? title : suffix
+    }
+
+    private static func shortenPathLikeTitle(_ title: String, location: String?) -> String? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let abbreviatedLocation = location.map { ($0 as NSString).abbreviatingWithTildeInPath }
+
+        let pathLikeTitle: String? = if trimmedTitle == "~" ||
+            trimmedTitle.hasPrefix("~/") ||
+            trimmedTitle.hasPrefix("/") {
+            trimmedTitle
+        } else if let abbreviatedLocation, trimmedTitle == abbreviatedLocation {
+            abbreviatedLocation
+        } else {
+            nil
+        }
+
+        guard let pathLikeTitle else { return nil }
+        if pathLikeTitle == "~" { return "Home" }
+
+        let lastComponent = (pathLikeTitle as NSString).lastPathComponent
+        return lastComponent.isEmpty ? pathLikeTitle : lastComponent
+    }
+}
+
 enum WorkspaceCloseSelection {
     static func replacementID(
         in workspaces: [WorkspaceCloseSelectionEntry],
@@ -586,6 +639,9 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         workspaceSidebarViewModel.moveWorkspace = { [weak self] sourceID, insertionIndex in
             self?.moveWorkspace(sourceID: sourceID, toActiveInsertionIndex: insertionIndex)
         }
+        workspaceSidebarViewModel.detachWorkspace = { [weak self] id in
+            self?.detachWorkspaceToWindow(id: id)
+        }
         workspaceSidebarViewModel.renameSelectedWorkspace = { [weak self] in
             self?.promptTabTitle()
         }
@@ -689,8 +745,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     private func workspaceDisplayTitle(for workspace: WorkspaceState) -> String {
-        let title = workspace.titleOverride ?? workspace.computedTitle
-        return title.isEmpty ? "Workspace" : title
+        WorkspaceTitlePresentation.displayTitle(
+            titleOverride: workspace.titleOverride,
+            computedTitle: workspace.computedTitle,
+            location: workspace.location
+        )
     }
 
     private func workspaceDisplayLocation(for workspace: WorkspaceState) -> String? {
@@ -803,7 +862,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let activeCount = active.count
         guard let destinationIndex = WorkspaceSidebarReorderDestination.destinationIndex(
             sourceIndex: sourceIndex,
-            proposedInsertionIndex: insertionIndex,
+            proposedDestinationIndex: insertionIndex,
             itemCount: activeCount
         ) else {
             refreshWorkspaceSidebar()
@@ -815,6 +874,89 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         workspaces = active + inactive
         syncWorkspaceSavedActiveIndices()
         refreshWorkspaceSidebar()
+    }
+
+    private func moveActiveWorkspace(by offset: Int) {
+        guard offset != 0 else { return }
+        syncActiveWorkspaceFromController()
+
+        var activeWorkspaces = workspaces.filter { !$0.isInactive }
+        guard activeWorkspaces.count > 1 else { return }
+        guard let selectedIndex = activeWorkspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
+
+        let finalIndex: Int
+        if offset < 0 {
+            finalIndex = max(selectedIndex + offset, 0)
+        } else {
+            finalIndex = min(selectedIndex + offset, activeWorkspaces.count - 1)
+        }
+
+        guard finalIndex != selectedIndex else { return }
+
+        let moving = activeWorkspaces.remove(at: selectedIndex)
+        activeWorkspaces.insert(moving, at: finalIndex)
+        let inactiveWorkspaces = workspaces.filter(\.isInactive)
+        workspaces = activeWorkspaces + inactiveWorkspaces
+        syncWorkspaceSavedActiveIndices()
+        refreshWorkspaceSidebar()
+    }
+
+    private func selectWorkspace(by offset: Int) {
+        guard offset != 0 else { return }
+        syncActiveWorkspaceFromController()
+
+        let orderedWorkspaces = workspaces
+        guard !orderedWorkspaces.isEmpty else { return }
+        guard let selectedIndex = orderedWorkspaces.firstIndex(where: { $0.id == activeWorkspaceID }) else { return }
+
+        let finalIndex: Int
+        if offset < 0 {
+            finalIndex = max(selectedIndex + offset, 0)
+        } else {
+            finalIndex = min(selectedIndex + offset, orderedWorkspaces.count - 1)
+        }
+
+        guard finalIndex != selectedIndex else { return }
+        selectWorkspace(withID: orderedWorkspaces[finalIndex].id)
+    }
+
+    private func detachWorkspaceToWindow(id: String) {
+        syncActiveWorkspaceFromController()
+        guard workspaces.count > 1 else {
+            refreshWorkspaceSidebar()
+            return
+        }
+        guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == id }) else { return }
+
+        let workspace = workspaces.remove(at: workspaceIndex)
+        let replacementID = WorkspaceCloseSelection.replacementID(
+            in: workspaceCloseSelectionEntries(),
+            closingID: id,
+            activeWorkspaceID: activeWorkspaceID,
+            previousWorkspaceID: previousActiveWorkspaceID,
+            selectionHistory: workspaceSelectionHistory
+        )
+
+        workspaceSelectionHistory.removeAll { $0 == id }
+        if previousActiveWorkspaceID == id {
+            previousActiveWorkspaceID = workspaceSelectionHistory.last(where: { $0 != activeWorkspaceID })
+        }
+
+        if activeWorkspaceID == id, let replacementID {
+            activeWorkspaceID = replacementID
+            restoreActiveWorkspaceState()
+        }
+
+        syncWorkspaceSavedActiveIndices()
+        pruneWorkspaceSelectionHistory()
+        refreshWorkspaceSidebar()
+
+        let controller = Self.newWindow(ghostty, tree: workspace.tree, confirmUndo: false)
+        controller.titleOverride = workspace.titleOverride
+        DispatchQueue.main.async {
+            controller.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func evaluateWorkspaceInactivity(referenceDate: Date) {
@@ -1729,6 +1871,22 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         refreshWorkspaceSidebar()
     }
 
+    @IBAction func selectPreviousWorkspaceShortcut(_ sender: Any?) {
+        selectWorkspace(by: -1)
+    }
+
+    @IBAction func selectNextWorkspaceShortcut(_ sender: Any?) {
+        selectWorkspace(by: 1)
+    }
+
+    @IBAction func moveWorkspaceUpShortcut(_ sender: Any?) {
+        moveActiveWorkspace(by: -1)
+    }
+
+    @IBAction func moveWorkspaceDownShortcut(_ sender: Any?) {
+        moveActiveWorkspace(by: 1)
+    }
+
     @IBAction func closeTab(_ sender: Any?) {
         guard workspaces.count > 1 else {
             closeWindow(sender)
@@ -1824,10 +1982,13 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     override func handleLocalKeyDown(_ event: NSEvent) -> Bool {
         guard window?.attachedSheet == nil else { return false }
 
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let shortcutModifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
         let characters = event.charactersIgnoringModifiers?.lowercased()
+        let keyCode = event.keyCode
+        let upArrowKeyCode: UInt16 = 126
+        let downArrowKeyCode: UInt16 = 125
 
-        if modifiers == [.command],
+        if shortcutModifiers == [.command],
            let characters,
            let workspaceNumber = Int(characters),
            (1...9).contains(workspaceNumber) {
@@ -1838,7 +1999,17 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return true
         }
 
-        switch (modifiers, characters) {
+        if shortcutModifiers == [.command, .option], keyCode == upArrowKeyCode {
+            moveActiveWorkspace(by: -1)
+            return true
+        }
+
+        if shortcutModifiers == [.command, .option], keyCode == downArrowKeyCode {
+            moveActiveWorkspace(by: 1)
+            return true
+        }
+
+        switch (shortcutModifiers, characters) {
         case ([.command], "b"):
             toggleWorkspaceSidebar(nil)
             return true

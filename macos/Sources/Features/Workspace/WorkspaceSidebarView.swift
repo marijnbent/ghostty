@@ -49,11 +49,31 @@ final class WorkspaceSidebarViewModel: ObservableObject {
 
     var selectWorkspace: ((String) -> Void)?
     var moveWorkspace: ((String, Int) -> Void)?
+    var detachWorkspace: ((String) -> Void)?
     var renameSelectedWorkspace: (() -> Void)?
     var newWorkspace: (() -> Void)?
+    private var localDragEndMonitor: Any?
+    private var globalDragEndMonitor: Any?
+    private var dragCleanupWorkItem: DispatchWorkItem?
+    private var isDragInsideActiveList = false
 
     var activeRows: [WorkspaceSidebarRow] {
         rows.filter { !$0.isInactive }
+    }
+
+    var activeDisplayRows: [WorkspaceSidebarRow] {
+        let hiddenWorkspaceID: String? = if isDragInsideActiveList {
+            draggingWorkspaceID
+        } else {
+            nil
+        }
+
+        guard let hiddenWorkspaceID else { return activeRows }
+        return activeRows.filter { $0.id != hiddenWorkspaceID }
+    }
+
+    var isDragging: Bool {
+        draggingWorkspaceID != nil
     }
 
     func performSelect(_ id: String) {
@@ -62,12 +82,18 @@ final class WorkspaceSidebarViewModel: ObservableObject {
 
     func beginDragging(_ id: String) -> NSItemProvider {
         draggingWorkspaceID = id
-        clearDropTarget()
+        isDragInsideActiveList = true
+        if let sourceIndex = activeRows.firstIndex(where: { $0.id == id }) {
+            dropInsertionTarget = .init(index: sourceIndex)
+        } else {
+            dropInsertionTarget = nil
+        }
+        installDragEndMonitors()
         return NSItemProvider(object: id as NSString)
     }
 
-    func performMove(_ sourceID: String, to insertionIndex: Int) {
-        moveWorkspace?(sourceID, insertionIndex)
+    func performMove(_ sourceID: String, to destinationIndex: Int) {
+        moveWorkspace?(sourceID, destinationIndex)
         clearDragState()
     }
 
@@ -80,35 +106,69 @@ final class WorkspaceSidebarViewModel: ObservableObject {
     }
 
     func updateDropInsertionTarget(_ proposedIndex: Int) {
-        let clampedIndex = min(max(proposedIndex, 0), activeRows.count)
-        let target: WorkspaceSidebarInsertionTarget? = if let draggingWorkspaceID,
-            let sourceIndex = activeRows.firstIndex(where: { $0.id == draggingWorkspaceID }),
-            WorkspaceSidebarReorderDestination.isNoOp(
-                sourceIndex: sourceIndex,
-                proposedInsertionIndex: clampedIndex,
-                itemCount: activeRows.count
-            ) {
-            nil
-        } else {
-            .init(index: clampedIndex)
-        }
-
+        let clampedIndex = min(max(proposedIndex, 0), max(activeRows.count - 1, 0))
+        let target = WorkspaceSidebarInsertionTarget(index: clampedIndex)
         guard dropInsertionTarget != target else { return }
-        withAnimation(.easeInOut(duration: 0.14)) {
-            dropInsertionTarget = target
-        }
+        dropInsertionTarget = target
     }
 
     func clearDropTarget() {
-        guard dropInsertionTarget != nil else { return }
-        withAnimation(.easeInOut(duration: 0.14)) {
-            dropInsertionTarget = nil
-        }
+        dropInsertionTarget = nil
     }
 
     func clearDragState() {
+        removeDragEndMonitors()
         draggingWorkspaceID = nil
+        isDragInsideActiveList = false
         clearDropTarget()
+    }
+
+    func setDragInsideActiveList(_ isInside: Bool) {
+        guard isDragInsideActiveList != isInside else { return }
+        isDragInsideActiveList = isInside
+        if !isInside {
+            clearDropTarget()
+        } else if let draggingWorkspaceID,
+            let sourceIndex = activeRows.firstIndex(where: { $0.id == draggingWorkspaceID }),
+            dropInsertionTarget == nil {
+            dropInsertionTarget = .init(index: sourceIndex)
+        }
+    }
+
+    private func installDragEndMonitors() {
+        guard localDragEndMonitor == nil, globalDragEndMonitor == nil else { return }
+        localDragEndMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            self?.scheduleDeferredDragCleanup()
+            return event
+        }
+        globalDragEndMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.scheduleDeferredDragCleanup()
+            }
+        }
+    }
+
+    private func removeDragEndMonitors() {
+        dragCleanupWorkItem?.cancel()
+        dragCleanupWorkItem = nil
+        if let localDragEndMonitor {
+            NSEvent.removeMonitor(localDragEndMonitor)
+            self.localDragEndMonitor = nil
+        }
+        if let globalDragEndMonitor {
+            NSEvent.removeMonitor(globalDragEndMonitor)
+            self.globalDragEndMonitor = nil
+        }
+    }
+
+    private func scheduleDeferredDragCleanup() {
+        dragCleanupWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, self.draggingWorkspaceID != nil else { return }
+            self.clearDragState()
+        }
+        dragCleanupWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
     }
 }
 
@@ -120,54 +180,64 @@ struct WorkspaceSidebarInsertionTarget: Equatable {
     let index: Int
 }
 
-enum WorkspaceSidebarRowDropPosition: Equatable {
-    case before
-    case after
+enum WorkspaceSidebarInsertionMath {
+    static func destinationIndex(
+        for locationY: CGFloat,
+        orderedRowIDs: [String],
+        draggingID: String?,
+        rowFrames: [String: CGRect]
+    ) -> Int? {
+        guard draggingID != nil else { return nil }
 
-    static func calculate(at locationY: CGFloat, rowHeight: CGFloat) -> Self {
-        guard rowHeight > 0 else { return .before }
-        return locationY < (rowHeight / 2) ? .before : .after
-    }
+        let visibleRowIDs = orderedRowIDs.filter { $0 != draggingID }
+        guard !visibleRowIDs.isEmpty else { return 0 }
 
-    func insertionIndex(forRowAt index: Int) -> Int {
-        switch self {
-        case .before:
-            index
-        case .after:
-            index + 1
+        let orderedFrames = visibleRowIDs.compactMap { rowFrames[$0] }
+        guard orderedFrames.count == visibleRowIDs.count else { return nil }
+
+        for (index, frame) in orderedFrames.enumerated() where locationY < frame.midY {
+            return index
         }
+
+        return orderedFrames.count
     }
 }
 
 enum WorkspaceSidebarReorderDestination {
-    static func isNoOp(sourceIndex: Int, proposedInsertionIndex: Int, itemCount: Int) -> Bool {
-        let clampedIndex = min(max(proposedInsertionIndex, 0), itemCount)
-        return clampedIndex == sourceIndex || clampedIndex == sourceIndex + 1
+    static func isNoOp(sourceIndex: Int, proposedDestinationIndex: Int, itemCount: Int) -> Bool {
+        guard itemCount > 1 else { return true }
+        let clampedIndex = min(max(proposedDestinationIndex, 0), itemCount - 1)
+        return clampedIndex == sourceIndex
     }
 
     static func destinationIndex(
         sourceIndex: Int,
-        proposedInsertionIndex: Int,
+        proposedDestinationIndex: Int,
         itemCount: Int
     ) -> Int? {
-        let clampedIndex = min(max(proposedInsertionIndex, 0), itemCount)
+        guard itemCount > 1 else { return nil }
+        let clampedIndex = min(max(proposedDestinationIndex, 0), itemCount - 1)
         guard !isNoOp(
             sourceIndex: sourceIndex,
-            proposedInsertionIndex: clampedIndex,
+            proposedDestinationIndex: clampedIndex,
             itemCount: itemCount
         ) else {
             return nil
         }
 
-        return clampedIndex > sourceIndex ? clampedIndex - 1 : clampedIndex
+        return clampedIndex
     }
 }
 
 private enum WorkspaceSidebarLayout {
     static let rowSpacing: CGFloat = 8
+    static let dropPlaceholderHeight: CGFloat = 28
+    static let bottomDropAreaHeight: CGFloat = dropPlaceholderHeight * 3
     static let inactiveTopPadding: CGFloat = 10
     static let inactiveBottomPadding: CGFloat = 12
     static let estimatedRowHeight: CGFloat = 42
+    static let dragAnimation = Animation.spring(response: 0.2, dampingFraction: 0.85)
+    static let coordinateSpaceName = "WorkspaceSidebarActiveList"
 
     static func estimatedInactiveSectionHeight(rowCount: Int) -> CGFloat {
         guard rowCount > 0 else { return 0 }
@@ -180,6 +250,7 @@ private enum WorkspaceSidebarLayout {
 
 struct WorkspaceSidebarView: View {
     @ObservedObject var viewModel: WorkspaceSidebarViewModel
+    @State private var activeRowFrames: [String: CGRect] = [:]
 
     private var inactiveRows: [WorkspaceSidebarRow] {
         viewModel.rows.filter(\.isInactive)
@@ -217,37 +288,25 @@ struct WorkspaceSidebarView: View {
             )
 
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if !viewModel.activeRows.isEmpty {
-                            ForEach(Array(viewModel.activeRows.enumerated()), id: \.element.id) { index, row in
-                                WorkspaceSidebarInsertionIndicator(
-                                    isVisible: viewModel.dropInsertionTarget?.index == index,
-                                    theme: viewModel.theme
-                                )
-
-                                WorkspaceSidebarActiveRow(
-                                    row: row,
-                                    rowIndex: index,
-                                    viewModel: viewModel
-                                )
-                            }
-
-                            WorkspaceSidebarInsertionIndicator(
-                                isVisible: viewModel.dropInsertionTarget?.index == viewModel.activeRows.count,
-                                theme: viewModel.theme
-                            )
-                            WorkspaceSidebarTrailingDropZone(
-                                insertionIndex: viewModel.activeRows.count,
-                                viewModel: viewModel
-                            )
-                        } else {
-                            WorkspaceSidebarEmptyDropZone(viewModel: viewModel)
-                        }
+                GeometryReader { activeArea in
+                    ScrollView {
+                        WorkspaceSidebarActiveList(
+                            viewModel: viewModel,
+                            activeRowFrames: $activeRowFrames
+                        )
+                        .frame(
+                            minHeight: max(activeArea.size.height - 20, 1),
+                            alignment: .topLeading
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
                     }
-                    .animation(.easeInOut(duration: 0.14), value: viewModel.dropInsertionTarget)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                }
+                .onChange(of: viewModel.draggingWorkspaceID) { draggingWorkspaceID in
+                    if draggingWorkspaceID == nil {
+                        viewModel.clearDropTarget()
+                        activeRowFrames = [:]
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
@@ -272,17 +331,62 @@ struct WorkspaceSidebarView: View {
     }
 }
 
+private struct WorkspaceSidebarActiveList: View {
+    @ObservedObject var viewModel: WorkspaceSidebarViewModel
+    @Binding var activeRowFrames: [String: CGRect]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: WorkspaceSidebarLayout.rowSpacing) {
+            if !viewModel.activeRows.isEmpty {
+                ForEach(Array(viewModel.activeDisplayRows.enumerated()), id: \.element.id) { index, row in
+                    if viewModel.dropInsertionTarget?.index == index, viewModel.isDragging {
+                        WorkspaceSidebarDropPlaceholder(theme: viewModel.theme)
+                    }
+
+                    WorkspaceSidebarActiveRow(row: row, viewModel: viewModel)
+                        .background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: WorkspaceSidebarRowFramePreferenceKey.self,
+                                    value: [row.id: geometry.frame(in: .named(WorkspaceSidebarLayout.coordinateSpaceName))]
+                                )
+                            }
+                        }
+                }
+
+                if viewModel.dropInsertionTarget?.index == viewModel.activeDisplayRows.count, viewModel.isDragging {
+                    WorkspaceSidebarDropPlaceholder(theme: viewModel.theme)
+                }
+
+                Color.clear
+                    .frame(height: viewModel.isDragging ? WorkspaceSidebarLayout.bottomDropAreaHeight : 0)
+            } else {
+                Color.clear.frame(height: 1)
+            }
+        }
+        .coordinateSpace(name: WorkspaceSidebarLayout.coordinateSpaceName)
+        .onPreferenceChange(WorkspaceSidebarRowFramePreferenceKey.self) { activeRowFrames = $0 }
+        .onDrop(
+            of: [WorkspaceSidebarDrag.type],
+            delegate: WorkspaceSidebarListDropDelegate(
+                viewModel: viewModel,
+                rowFrames: { activeRowFrames }
+            )
+        )
+        .animation(WorkspaceSidebarLayout.dragAnimation, value: viewModel.draggingWorkspaceID)
+        .animation(WorkspaceSidebarLayout.dragAnimation, value: viewModel.dropInsertionTarget)
+    }
+}
+
 private struct WorkspaceSidebarActiveRow: View {
     let row: WorkspaceSidebarRow
-    let rowIndex: Int
 
     @ObservedObject var viewModel: WorkspaceSidebarViewModel
 
     var body: some View {
         WorkspaceSidebarRowView(
             row: row,
-            theme: viewModel.theme,
-            isDragged: viewModel.draggingWorkspaceID == row.id && viewModel.dropInsertionTarget != nil
+            theme: viewModel.theme
         )
         .onTapGesture {
             viewModel.performSelect(row.id)
@@ -295,19 +399,13 @@ private struct WorkspaceSidebarActiveRow: View {
         }
         .onDrag {
             viewModel.beginDragging(row.id)
-        }
-        .background {
-            GeometryReader { geometry in
-                Color.clear
-                    .onDrop(
-                        of: [WorkspaceSidebarDrag.type],
-                        delegate: WorkspaceSidebarRowDropDelegate(
-                            rowIndex: rowIndex,
-                            rowHeight: geometry.size.height,
-                            viewModel: viewModel
-                        )
-                    )
-            }
+        } preview: {
+            WorkspaceSidebarRowView(
+                row: row,
+                theme: viewModel.theme,
+                isDragged: true
+            )
+            .frame(width: 220)
         }
     }
 }
@@ -365,11 +463,26 @@ private struct WorkspaceSidebarRowView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(backgroundColor)
         }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(dragOutlineColor, lineWidth: isDragged ? 1.5 : 0)
+        }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(
+            color: isDragged ? theme.rowSelection.opacity(0.24) : .clear,
+            radius: isDragged ? 10 : 0,
+            x: 0,
+            y: isDragged ? 4 : 0
+        )
+        .scaleEffect(isDragged ? 0.985 : 1.0)
         .opacity(opacity)
     }
 
     private var backgroundColor: Color {
+        if isDragged {
+            return theme.rowSelection.opacity(row.isInactive ? 0.58 : 0.72)
+        }
+
         if row.isSelected {
             return theme.rowSelection.opacity(row.isInactive ? 0.82 : 1.0)
         }
@@ -379,6 +492,11 @@ private struct WorkspaceSidebarRowView: View {
         }
 
         return .clear
+    }
+
+    private var dragOutlineColor: Color {
+        guard isDragged else { return .clear }
+        return theme.rowSelection.opacity(0.95)
     }
 
     private var titleColor: Color {
@@ -407,156 +525,93 @@ private struct WorkspaceSidebarRowView: View {
 
     private var opacity: Double {
         if row.isInactive { return 0.62 }
-        return isDragged ? 0.46 : 1.0
+        return isDragged ? 0.82 : 1.0
     }
 }
 
-private struct WorkspaceSidebarInsertionIndicator: View {
-    let isVisible: Bool
+private struct WorkspaceSidebarDropPlaceholder: View {
     let theme: WorkspaceSidebarTheme
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 1, style: .continuous)
-                .fill(theme.rowSelection.opacity(0.94))
-                .frame(height: 2)
-                .padding(.horizontal, 4)
-                .opacity(isVisible ? 1 : 0)
-        }
-        .frame(height: isVisible ? 14 : 4)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct WorkspaceSidebarTrailingDropZone: View {
-    let insertionIndex: Int
-    @ObservedObject var viewModel: WorkspaceSidebarViewModel
-
-    var body: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.clear)
-            .frame(height: 10)
-            .onDrop(
-                of: [WorkspaceSidebarDrag.type],
-                delegate: WorkspaceSidebarInsertionDropDelegate(
-                    insertionIndex: insertionIndex,
-                    viewModel: viewModel
-                )
-            )
+            .fill(theme.rowSelection.opacity(0.14))
+            .overlay(alignment: .center) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(theme.rowSelection.opacity(0.96))
+                    .frame(height: 3)
+                    .padding(.horizontal, 4)
+            }
+            .frame(height: WorkspaceSidebarLayout.dropPlaceholderHeight)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+            .accessibilityHidden(true)
     }
 }
 
-private struct WorkspaceSidebarEmptyDropZone: View {
-    @ObservedObject var viewModel: WorkspaceSidebarViewModel
+private struct WorkspaceSidebarRowFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
 
-    var body: some View {
-        Color.clear
-            .frame(height: 1)
-            .onDrop(
-                of: [WorkspaceSidebarDrag.type],
-                delegate: WorkspaceSidebarInsertionDropDelegate(
-                    insertionIndex: 0,
-                    viewModel: viewModel
-                )
-            )
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
-private struct WorkspaceSidebarRowDropDelegate: DropDelegate {
-    let rowIndex: Int
-    let rowHeight: CGFloat
+private struct WorkspaceSidebarListDropDelegate: DropDelegate {
     let viewModel: WorkspaceSidebarViewModel
+    let rowFrames: () -> [String: CGRect]
 
     func validateDrop(info: DropInfo) -> Bool {
         info.hasItemsConforming(to: [WorkspaceSidebarDrag.type])
     }
 
     func dropEntered(info: DropInfo) {
+        viewModel.setDragInsideActiveList(true)
         updateDropTarget(for: info)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        updateDropTarget(for: info)
-        let operation: DropOperation = viewModel.dropInsertionTarget == nil ? .forbidden : .move
-        return DropProposal(operation: operation)
     }
 
     func dropExited(info: DropInfo) {
-        viewModel.clearDropTarget()
+        viewModel.setDragInsideActiveList(false)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        viewModel.setDragInsideActiveList(true)
+        updateDropTarget(for: info)
+        return DropProposal(operation: .move)
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        viewModel.setDragInsideActiveList(true)
         updateDropTarget(for: info)
         return commitDrop()
     }
 
     private func updateDropTarget(for info: DropInfo) {
-        let position = WorkspaceSidebarRowDropPosition.calculate(
-            at: info.location.y,
-            rowHeight: rowHeight
-        )
-        viewModel.updateDropInsertionTarget(position.insertionIndex(forRowAt: rowIndex))
+        guard let destinationIndex = WorkspaceSidebarInsertionMath.destinationIndex(
+            for: info.location.y,
+            orderedRowIDs: viewModel.activeRows.map(\.id),
+            draggingID: viewModel.draggingWorkspaceID,
+            rowFrames: rowFrames()
+        ) else {
+            return
+        }
+        viewModel.updateDropInsertionTarget(destinationIndex)
     }
 
     private func commitDrop() -> Bool {
         guard
             let draggedID = viewModel.draggingWorkspaceID,
-            let insertionIndex = viewModel.dropInsertionTarget?.index
+            let destinationIndex = viewModel.dropInsertionTarget?.index
         else {
             viewModel.clearDragState()
             return false
         }
 
-        viewModel.performMove(draggedID, to: insertionIndex)
+        viewModel.performMove(draggedID, to: destinationIndex)
         return true
     }
 }
 
-private struct WorkspaceSidebarInsertionDropDelegate: DropDelegate {
-    let insertionIndex: Int
-    let viewModel: WorkspaceSidebarViewModel
-
-    func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [WorkspaceSidebarDrag.type])
-    }
-
-    func dropEntered(info: DropInfo) {
-        viewModel.updateDropInsertionTarget(insertionIndex)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        viewModel.updateDropInsertionTarget(insertionIndex)
-        let operation: DropOperation = viewModel.dropInsertionTarget == nil ? .forbidden : .move
-        return DropProposal(operation: operation)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        viewModel.updateDropInsertionTarget(insertionIndex)
-        guard
-            let draggedID = viewModel.draggingWorkspaceID,
-            let targetIndex = viewModel.dropInsertionTarget?.index
-        else {
-            viewModel.clearDragState()
-            return false
-        }
-
-        viewModel.performMove(draggedID, to: targetIndex)
-        return true
-    }
-
-    func dropExited(info: DropInfo) {
-        viewModel.clearDropTarget()
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
-        if condition {
-            transform(self)
-        } else {
-            self
-        }
+private extension CGRect {
+    var midY: CGFloat {
+        minY + (height / 2)
     }
 }

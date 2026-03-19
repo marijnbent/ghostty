@@ -1247,6 +1247,26 @@ extension Ghostty {
                 return false
             }
 
+            let shortcutModifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+            switch (shortcutModifiers, event.keyCode) {
+            case ([.command, .option], 126):
+                return NSApp.sendAction(
+                    #selector(TerminalController.moveWorkspaceUpShortcut(_:)),
+                    to: nil,
+                    from: self
+                )
+
+            case ([.command, .option], 125):
+                return NSApp.sendAction(
+                    #selector(TerminalController.moveWorkspaceDownShortcut(_:)),
+                    to: nil,
+                    from: self
+                )
+
+            default:
+                break
+            }
+
             // Get information about if this is a binding.
             let bindingFlags = surfaceModel.flatMap { surface in
                 var ghosttyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
