@@ -6,6 +6,7 @@ struct WorkspaceSidebarRow: Identifiable, Equatable {
     let id: String
     let title: String
     let subtitle: String?
+    let shortcutHint: String?
     let remoteSessionLabel: String?
     let hasRunningCommand: Bool
     let isSelected: Bool
@@ -235,7 +236,7 @@ private enum WorkspaceSidebarLayout {
     static let bottomDropAreaHeight: CGFloat = dropPlaceholderHeight * 3
     static let inactiveTopPadding: CGFloat = 10
     static let inactiveBottomPadding: CGFloat = 12
-    static let estimatedRowHeight: CGFloat = 42
+    static let estimatedRowHeight: CGFloat = 38
     static let dragAnimation = Animation.spring(response: 0.2, dampingFraction: 0.85)
     static let coordinateSpaceName = "WorkspaceSidebarActiveList"
 
@@ -256,12 +257,13 @@ struct WorkspaceSidebarView: View {
         viewModel.rows.filter(\.isInactive)
     }
 
-    private var inactiveRowsContent: some View {
+    private func inactiveRowsContent(sidebarWidth: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: WorkspaceSidebarLayout.rowSpacing) {
             ForEach(inactiveRows) { row in
                 WorkspaceSidebarRowView(
                     row: row,
                     theme: viewModel.theme,
+                    sidebarWidth: sidebarWidth,
                     showsSubtitle: false
                 )
                 .onTapGesture {
@@ -286,13 +288,15 @@ struct WorkspaceSidebarView: View {
             let estimatedInactiveHeight = WorkspaceSidebarLayout.estimatedInactiveSectionHeight(
                 rowCount: inactiveRows.count
             )
+            let sidebarWidth = geometry.size.width
 
             VStack(spacing: 0) {
                 GeometryReader { activeArea in
                     ScrollView {
                         WorkspaceSidebarActiveList(
                             viewModel: viewModel,
-                            activeRowFrames: $activeRowFrames
+                            activeRowFrames: $activeRowFrames,
+                            sidebarWidth: sidebarWidth
                         )
                         .frame(
                             minHeight: max(activeArea.size.height - 20, 1),
@@ -314,11 +318,11 @@ struct WorkspaceSidebarView: View {
                     Group {
                         if estimatedInactiveHeight > maxInactiveHeight {
                             ScrollView {
-                                inactiveRowsContent
+                                inactiveRowsContent(sidebarWidth: sidebarWidth)
                             }
                             .frame(maxHeight: maxInactiveHeight)
                         } else {
-                            inactiveRowsContent
+                            inactiveRowsContent(sidebarWidth: sidebarWidth)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .bottomLeading)
@@ -334,6 +338,7 @@ struct WorkspaceSidebarView: View {
 private struct WorkspaceSidebarActiveList: View {
     @ObservedObject var viewModel: WorkspaceSidebarViewModel
     @Binding var activeRowFrames: [String: CGRect]
+    let sidebarWidth: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: WorkspaceSidebarLayout.rowSpacing) {
@@ -343,7 +348,11 @@ private struct WorkspaceSidebarActiveList: View {
                         WorkspaceSidebarDropPlaceholder(theme: viewModel.theme)
                     }
 
-                    WorkspaceSidebarActiveRow(row: row, viewModel: viewModel)
+                    WorkspaceSidebarActiveRow(
+                        row: row,
+                        viewModel: viewModel,
+                        sidebarWidth: sidebarWidth
+                    )
                         .background {
                             GeometryReader { geometry in
                                 Color.clear.preference(
@@ -382,11 +391,13 @@ private struct WorkspaceSidebarActiveRow: View {
     let row: WorkspaceSidebarRow
 
     @ObservedObject var viewModel: WorkspaceSidebarViewModel
+    let sidebarWidth: CGFloat
 
     var body: some View {
         WorkspaceSidebarRowView(
             row: row,
-            theme: viewModel.theme
+            theme: viewModel.theme,
+            sidebarWidth: sidebarWidth
         )
         .onTapGesture {
             viewModel.performSelect(row.id)
@@ -413,8 +424,11 @@ private struct WorkspaceSidebarActiveRow: View {
 private struct WorkspaceSidebarRowView: View {
     let row: WorkspaceSidebarRow
     let theme: WorkspaceSidebarTheme
+    var sidebarWidth: CGFloat = 248
     var isDragged: Bool = false
     var showsSubtitle: Bool = true
+    @State private var pulseScale: Double = 1.0
+    @State private var isHovered: Bool = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -425,8 +439,8 @@ private struct WorkspaceSidebarRowView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
 
-                if showsSubtitle, let subtitle = row.subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
+                if showsSubtitle, let displaySubtitle, !displaySubtitle.isEmpty {
+                    Text(displaySubtitle)
                         .font(.system(size: 11))
                         .foregroundStyle(subtitleColor)
                         .lineLimit(1)
@@ -440,6 +454,12 @@ private struct WorkspaceSidebarRowView: View {
                     .fill(badgeForegroundColor)
                     .frame(width: 8, height: 8)
                     .fixedSize()
+                    .scaleEffect(pulseScale)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+                            pulseScale = 1.22
+                        }
+                    }
             }
 
             if let remoteSessionLabel = row.remoteSessionLabel, !remoteSessionLabel.isEmpty {
@@ -458,7 +478,7 @@ private struct WorkspaceSidebarRowView: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(backgroundColor)
@@ -466,6 +486,15 @@ private struct WorkspaceSidebarRowView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(dragOutlineColor, lineWidth: isDragged ? 1.5 : 0)
+        }
+        .overlay(alignment: .trailing) {
+            if canShowShortcutHint, let shortcutHint = row.shortcutHint {
+                Text(shortcutHint)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.subtitle.opacity(0.65))
+                    .padding(.trailing, 10)
+                    .transition(.opacity)
+            }
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(
@@ -476,6 +505,16 @@ private struct WorkspaceSidebarRowView: View {
         )
         .scaleEffect(isDragged ? 0.985 : 1.0)
         .opacity(opacity)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.12)) {
+                isHovered = hovering
+            }
+        }
+        .onChange(of: row.hasRunningCommand) { running in
+            if !running {
+                pulseScale = 1.0
+            }
+        }
     }
 
     private var backgroundColor: Color {
@@ -521,6 +560,21 @@ private struct WorkspaceSidebarRowView: View {
 
     private var showsRunningIndicator: Bool {
         row.hasRunningCommand && (row.remoteSessionLabel == nil || row.remoteSessionLabel?.isEmpty == true)
+    }
+
+    private var canShowShortcutHint: Bool {
+        isHovered &&
+            !isDragged &&
+            !showsRunningIndicator &&
+            (row.remoteSessionLabel == nil || row.remoteSessionLabel?.isEmpty == true)
+    }
+
+    private var displaySubtitle: String? {
+        guard let subtitle = row.subtitle, !subtitle.isEmpty else { return nil }
+        guard sidebarWidth < 190 else { return subtitle }
+
+        let lastPathComponent = (subtitle as NSString).lastPathComponent
+        return lastPathComponent.isEmpty ? subtitle : lastPathComponent
     }
 
     private var opacity: Double {

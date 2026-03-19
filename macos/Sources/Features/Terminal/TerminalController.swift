@@ -735,11 +735,12 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     }
 
     private func workspaceRowsForSidebar() -> [WorkspaceSidebarRow] {
-        workspaces.map { workspace in
+        workspaces.enumerated().map { index, workspace in
             WorkspaceSidebarRow(
                 id: workspace.id,
                 title: workspaceDisplayTitle(for: workspace),
                 subtitle: workspaceDisplayLocation(for: workspace),
+                shortcutHint: (!workspace.isInactive && index < 9) ? "⌘\(index + 1)" : nil,
                 remoteSessionLabel: workspace.remoteSession()?.kind.badgeLabel,
                 hasRunningCommand: workspace.hasRunningCommand,
                 isSelected: workspace.id == activeWorkspaceID,
