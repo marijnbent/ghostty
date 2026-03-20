@@ -82,11 +82,28 @@ struct WorkspaceCloseSelectionTests {
         #expect(replacement == "b")
     }
 
-    @Test func closingActiveWorkspaceFallsBackToInactiveWhenNoActiveWorkspacesRemain() {
+    @Test func closingLastActiveWorkspaceCreatesFreshWorkspaceInsteadOfSelectingInactive() {
         let workspaces: [WorkspaceCloseSelectionEntry] = [
             .init(id: "a", isInactive: false),
             .init(id: "b", isInactive: true),
             .init(id: "c", isInactive: true),
+        ]
+
+        let replacement = WorkspaceCloseSelection.replacementID(
+            in: workspaces,
+            closingID: "a",
+            activeWorkspaceID: "a",
+            previousWorkspaceID: nil,
+            selectionHistory: []
+        )
+
+        #expect(replacement == nil)
+    }
+
+    @Test func closingInactiveWorkspaceStillFallsBackToRemainingInactiveWorkspace() {
+        let workspaces: [WorkspaceCloseSelectionEntry] = [
+            .init(id: "a", isInactive: true),
+            .init(id: "b", isInactive: true),
         ]
 
         let replacement = WorkspaceCloseSelection.replacementID(
