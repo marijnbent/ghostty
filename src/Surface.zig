@@ -1072,6 +1072,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
             try self.showDesktopNotification(title, body);
         },
 
+        .ghostty_attention => |v| {
+            _ = self.rt_app.performAction(
+                .{ .surface = self },
+                .agent_attention,
+                v,
+            ) catch |err| {
+                log.warn("apprt failed to report attention err={}", .{err});
+            };
+        },
+
         .renderer_health => |health| self.updateRendererHealth(health),
 
         .scrollbar => |scrollbar| self.updateScrollbar(scrollbar),

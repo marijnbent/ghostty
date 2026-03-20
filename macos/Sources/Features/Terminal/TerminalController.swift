@@ -38,12 +38,19 @@ enum WorkspaceTitlePresentation {
         let trimmedTitle = computedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return "Workspace" }
 
-        let withoutHostPrefix = stripHostPrefix(from: trimmedTitle)
+        let (prefix, titleBody) = splitLeadingPrefix(from: trimmedTitle)
+        let withoutHostPrefix = stripHostPrefix(from: titleBody)
         if let shortenedPathTitle = shortenPathLikeTitle(withoutHostPrefix, location: location) {
-            return shortenedPathTitle
+            return prefix + shortenedPathTitle
         }
 
-        return withoutHostPrefix
+        return prefix + withoutHostPrefix
+    }
+
+    private static func splitLeadingPrefix(from title: String) -> (prefix: String, body: String) {
+        let bellPrefix = "🔔 "
+        guard title.hasPrefix(bellPrefix) else { return ("", title) }
+        return (bellPrefix, String(title.dropFirst(bellPrefix.count)))
     }
 
     private static func stripHostPrefix(from title: String) -> String {
@@ -75,6 +82,85 @@ enum WorkspaceTitlePresentation {
 
         let lastComponent = (pathLikeTitle as NSString).lastPathComponent
         return lastComponent.isEmpty ? pathLikeTitle : lastComponent
+    }
+}
+
+enum WorkspaceTransientAttention: Equatable {
+    case commandSuccess
+    case commandFailure
+    case agentPlanReady
+    case agentDone
+
+    var sidebarBadge: WorkspaceSidebarTransientBadge {
+        switch self {
+        case .commandSuccess:
+            .symbol(systemName: "bell.fill", tone: .warning)
+        case .commandFailure:
+            .symbol(systemName: "exclamationmark.circle.fill", tone: .warning)
+        case .agentPlanReady:
+            .pill(label: "PLAN", tone: .accent)
+        case .agentDone:
+            .pill(label: "DONE", tone: .success)
+        }
+    }
+}
+
+enum WorkspaceStickyAgentAttention: Int, Comparable {
+    case done = 1
+    case planReady = 2
+    case needsInput = 3
+
+    init(kind: Ghostty.Action.AgentAttention.Kind) {
+        switch kind {
+        case .agentNeedsInput:
+            self = .needsInput
+        case .agentPlanReady:
+            self = .planReady
+        case .agentDone:
+            self = .done
+        }
+    }
+
+    var badgeLabel: String {
+        switch self {
+        case .needsInput:
+            "ASK"
+        case .planReady:
+            "PLAN"
+        case .done:
+            "DONE"
+        }
+    }
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+enum WorkspaceLastActivityPresentation {
+    static func sidebarTimestamp(
+        lastActivityAt: Date,
+        referenceDate: Date
+    ) -> String {
+        let elapsed = max(0, referenceDate.timeIntervalSince(lastActivityAt))
+
+        if elapsed < 90 {
+            return "now"
+        }
+
+        if elapsed < 60 * 60 {
+            return "\(max(Int(elapsed / 60), 1))m"
+        }
+
+        if elapsed < 24 * 60 * 60 {
+            return "\(max(Int(elapsed / (60 * 60)), 1))h"
+        }
+
+        if elapsed < 7 * 24 * 60 * 60 {
+            return "\(max(Int(elapsed / (24 * 60 * 60)), 1))d"
+        }
+
+        return "\(max(Int(elapsed / (7 * 24 * 60 * 60)), 1))w"
     }
 }
 
@@ -151,10 +237,19 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         var inactiveAt: Date?
         var isInactive: Bool = false
         var savedActiveIndex: Int = 0
+        var unseenAttentionCount: Int = 0
+        var transientAttention: WorkspaceTransientAttention?
         var subscriptions: Set<AnyCancellable> = []
 
         var hasRunningCommand: Bool {
             tree.contains { $0.isCommandRunning }
+        }
+
+        var stickyAgentAttention: WorkspaceStickyAgentAttention? {
+            tree
+                .compactMap { $0.agentAttentionState }
+                .map(WorkspaceStickyAgentAttention.init(kind:))
+                .max()
         }
 
         init(
@@ -718,6 +813,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             recordWorkspaceSelection(replacementWorkspace.id)
             previousActiveWorkspaceID = workspaceSelectionHistory.last(where: { $0 != replacementWorkspace.id })
             restoreActiveWorkspaceState()
+            markWorkspaceAttentionSeen(id: replacementWorkspace.id, refreshSidebar: false)
             return true
         }
 
@@ -728,6 +824,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         recordWorkspaceSelection(freshWorkspace.id)
         previousActiveWorkspaceID = workspaceSelectionHistory.last(where: { $0 != freshWorkspace.id })
         restoreActiveWorkspaceState()
+        markWorkspaceAttentionSeen(id: freshWorkspace.id, refreshSidebar: false)
         return true
     }
 
@@ -762,14 +859,22 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         true
     }
 
-    private func workspaceRowsForSidebar() -> [WorkspaceSidebarRow] {
+    private func workspaceRowsForSidebar(referenceDate: Date = .now) -> [WorkspaceSidebarRow] {
         workspaces.enumerated().map { index, workspace in
             WorkspaceSidebarRow(
                 id: workspace.id,
                 title: workspaceDisplayTitle(for: workspace),
                 subtitle: workspaceDisplayLocation(for: workspace),
                 shortcutHint: (!workspace.isInactive && index < 9) ? "⌘\(index + 1)" : nil,
-                remoteSessionLabel: workspace.remoteSession()?.kind.badgeLabel,
+                lastActivityAt: workspace.lastActivityAt,
+                activityTimestamp: workspaceDisplayActivityTimestamp(
+                    for: workspace,
+                    referenceDate: referenceDate
+                ),
+                remoteSessionKind: workspace.remoteSession()?.kind,
+                agentAttentionLabel: workspace.stickyAgentAttention?.badgeLabel,
+                transientAttentionBadge: workspace.transientAttention?.sidebarBadge,
+                unseenAttentionCount: workspace.unseenAttentionCount,
                 hasRunningCommand: workspace.hasRunningCommand,
                 isSelected: workspace.id == activeWorkspaceID,
                 isInactive: workspace.isInactive
@@ -792,6 +897,17 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         guard let location = workspace.location, !location.isEmpty else { return nil }
         return (location as NSString).abbreviatingWithTildeInPath
+    }
+
+    private func workspaceDisplayActivityTimestamp(
+        for workspace: WorkspaceState,
+        referenceDate: Date
+    ) -> String? {
+        guard workspace.isInactive else { return nil }
+        return WorkspaceLastActivityPresentation.sidebarTimestamp(
+            lastActivityAt: workspace.lastActivityAt,
+            referenceDate: referenceDate
+        )
     }
 
     private func makeWorkspaceSidebarTheme() -> WorkspaceSidebarTheme {
@@ -837,6 +953,24 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let badgeForeground = isLight
             ? badgeBaseColor.shadow(withLevel: 0.12) ?? badgeBaseColor
             : badgeBaseColor.highlight(withLevel: 0.1) ?? badgeBaseColor
+        let warningBaseColor = NSColor.systemOrange
+        let warningBadgeBackground = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.2 : 0.24,
+            with: warningBaseColor
+        ).withAlphaComponent(isLight ? 0.92 : 0.9)
+        let warningBadgeForeground = isLight
+            ? warningBaseColor.shadow(withLevel: 0.12) ?? warningBaseColor
+            : warningBaseColor.highlight(withLevel: 0.1) ?? warningBaseColor
+        let successBaseColor = NSColor.systemGreen
+        let successBadgeBackground = blendedSidebarColor(
+            background,
+            fraction: isLight ? 0.18 : 0.22,
+            with: successBaseColor
+        ).withAlphaComponent(isLight ? 0.92 : 0.9)
+        let successBadgeForeground = isLight
+            ? successBaseColor.shadow(withLevel: 0.12) ?? successBaseColor
+            : successBaseColor.highlight(withLevel: 0.1) ?? successBaseColor
 
         return .init(
             background: Color(nsColor: background),
@@ -849,6 +983,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             inactiveSubtitle: Color(nsColor: inactiveSubtitleColor),
             badgeBackground: Color(nsColor: badgeBackground),
             badgeForeground: Color(nsColor: badgeForeground),
+            warningBadgeBackground: Color(nsColor: warningBadgeBackground),
+            warningBadgeForeground: Color(nsColor: warningBadgeForeground),
+            successBadgeBackground: Color(nsColor: successBadgeBackground),
+            successBadgeForeground: Color(nsColor: successBadgeForeground),
             colorScheme: isLight ? .light : .dark
         )
     }
@@ -874,6 +1012,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         previousActiveWorkspaceID = previousWorkspaceID
         recordWorkspaceSelection(workspaceID)
         restoreActiveWorkspaceState()
+        markWorkspaceAttentionSeen(id: workspaceID, refreshSidebar: false)
         refreshWorkspaceSidebar()
     }
 
@@ -886,6 +1025,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         switchWorkspace(to: id)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        markWorkspaceAttentionSeen(id: id)
         recordWorkspaceUserActivity()
     }
 
@@ -998,10 +1138,20 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     func evaluateWorkspaceInactivity(referenceDate: Date) {
         syncActiveWorkspaceFromController()
+        let hadInactiveWorkspaces = workspaces.contains(where: \.isInactive)
+        let workspaceIDsToDeactivate = workspaces
+            .filter {
+                !$0.isInactive &&
+                referenceDate.timeIntervalSince($0.lastActivityAt) >= Self.workspaceInactivityInterval
+            }
+            .map(\.id)
 
-        for workspace in workspaces where !workspace.isInactive {
-            guard referenceDate.timeIntervalSince(workspace.lastActivityAt) >= Self.workspaceInactivityInterval else { continue }
-            makeWorkspaceInactive(id: workspace.id, referenceDate: referenceDate)
+        for workspaceID in workspaceIDsToDeactivate {
+            makeWorkspaceInactive(id: workspaceID, referenceDate: referenceDate)
+        }
+
+        if workspaceIDsToDeactivate.isEmpty && hadInactiveWorkspaces {
+            refreshWorkspaceSidebar()
         }
     }
 
@@ -1211,6 +1361,93 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
                     self?.refreshWorkspaceSidebar()
                 }
                 .store(in: &workspace.subscriptions)
+
+            NotificationCenter.default.publisher(
+                for: .ghosttySurfaceCommandFinished,
+                object: surfaceView
+            )
+            .compactMap { $0.userInfo?[Notification.Name.GhosttySurfaceCommandFinishedKey] as? Ghostty.Action.CommandFinished }
+            .sink { [weak self] info in
+                self?.handleWorkspaceCommandFinished(workspaceID: workspace.id, info: info)
+            }
+            .store(in: &workspace.subscriptions)
+
+            NotificationCenter.default.publisher(
+                for: .ghosttySurfaceAttentionDidChange,
+                object: surfaceView
+            )
+            .compactMap { $0.userInfo?[Notification.Name.GhosttySurfaceAttentionKey] as? Ghostty.Action.AgentAttention }
+            .sink { [weak self] attention in
+                self?.handleWorkspaceAgentAttention(workspaceID: workspace.id, attention: attention)
+            }
+            .store(in: &workspace.subscriptions)
+        }
+    }
+
+    private func isWorkspaceCurrentlyVisible(_ workspaceID: String) -> Bool {
+        workspaceID == activeWorkspaceID && window?.isKeyWindow == true
+    }
+
+    private func markWorkspaceAttentionSeen(id: String, refreshSidebar: Bool = true) {
+        guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
+        guard workspace.unseenAttentionCount > 0 || workspace.transientAttention != nil else { return }
+        workspace.unseenAttentionCount = 0
+        workspace.transientAttention = nil
+        if refreshSidebar {
+            refreshWorkspaceSidebar()
+        }
+    }
+
+    private func recordWorkspaceTransientAttention(
+        _ attention: WorkspaceTransientAttention,
+        workspaceID: String
+    ) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        guard !isWorkspaceCurrentlyVisible(workspaceID) else { return }
+        workspace.unseenAttentionCount += 1
+        workspace.transientAttention = attention
+        refreshWorkspaceSidebar()
+    }
+
+    private func handleWorkspaceCommandFinished(
+        workspaceID: String,
+        info: Ghostty.Action.CommandFinished
+    ) {
+        let attention: WorkspaceTransientAttention = if info.succeeded == false {
+            .commandFailure
+        } else {
+            .commandSuccess
+        }
+        recordWorkspaceTransientAttention(attention, workspaceID: workspaceID)
+    }
+
+    private func handleWorkspaceAgentAttention(
+        workspaceID: String,
+        attention: Ghostty.Action.AgentAttention
+    ) {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }) else { return }
+        let isVisible = isWorkspaceCurrentlyVisible(workspaceID)
+
+        switch attention.operation {
+        case .set:
+            if !isVisible {
+                workspace.unseenAttentionCount += 1
+            }
+            refreshWorkspaceSidebar()
+
+        case .emit:
+            let transient: WorkspaceTransientAttention = switch attention.kind {
+            case .agentNeedsInput:
+                .commandFailure
+            case .agentPlanReady:
+                .agentPlanReady
+            case .agentDone:
+                .agentDone
+            }
+            recordWorkspaceTransientAttention(transient, workspaceID: workspaceID)
+
+        case .clear:
+            refreshWorkspaceSidebar()
         }
     }
 

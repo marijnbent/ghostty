@@ -372,6 +372,14 @@ extension Notification.Name {
     static let ghosttyDidUpdateScrollbar = Notification.Name("com.mitchellh.ghostty.didUpdateScrollbar")
     static let ScrollbarKey = ghosttyDidUpdateScrollbar.rawValue + ".scrollbar"
 
+    /// Notification sent when a surface reports attention-worthy state.
+    static let ghosttySurfaceAttentionDidChange = Notification.Name("com.mitchellh.ghostty.surfaceAttentionDidChange")
+    static let GhosttySurfaceAttentionKey = ghosttySurfaceAttentionDidChange.rawValue + ".attention"
+
+    /// Notification sent when a command finishes on a surface.
+    static let ghosttySurfaceCommandFinished = Notification.Name("com.mitchellh.ghostty.surfaceCommandFinished")
+    static let GhosttySurfaceCommandFinishedKey = ghosttySurfaceCommandFinished.rawValue + ".commandFinished"
+
     /// Focus the search field
     static let ghosttySearchFocus = Notification.Name("com.mitchellh.ghostty.searchFocus")
 }

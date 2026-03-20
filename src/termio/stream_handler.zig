@@ -327,6 +327,7 @@ pub const StreamHandler = struct {
             .window_title => try self.windowTitle(value.title),
             .report_pwd => try self.reportPwd(value.url),
             .show_desktop_notification => try self.showDesktopNotification(value.title, value.body),
+            .ghostty_attention => self.ghosttyAttention(value),
             .progress_report => self.progressReport(value),
             .start_hyperlink => try self.startHyperlink(value.uri, value.id),
             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
@@ -1546,5 +1547,9 @@ pub const StreamHandler = struct {
     /// Display a GUI progress report.
     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
         self.surfaceMessageWriter(.{ .progress_report = report });
+    }
+
+    fn ghosttyAttention(self: *StreamHandler, attention: terminal.osc.Command.GhosttyAttention) void {
+        self.surfaceMessageWriter(.{ .ghostty_attention = attention });
     }
 };

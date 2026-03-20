@@ -832,6 +832,26 @@ typedef struct {
   uint64_t duration;
 } ghostty_action_command_finished_s;
 
+// terminal.osc.parsers.ghostty_attention.Command.Operation
+typedef enum {
+  GHOSTTY_AGENT_ATTENTION_SET,
+  GHOSTTY_AGENT_ATTENTION_EMIT,
+  GHOSTTY_AGENT_ATTENTION_CLEAR,
+} ghostty_action_agent_attention_operation_e;
+
+// terminal.osc.parsers.ghostty_attention.Command.Kind
+typedef enum {
+  GHOSTTY_AGENT_ATTENTION_AGENT_NEEDS_INPUT,
+  GHOSTTY_AGENT_ATTENTION_AGENT_PLAN_READY,
+  GHOSTTY_AGENT_ATTENTION_AGENT_DONE,
+} ghostty_action_agent_attention_kind_e;
+
+// terminal.osc.parsers.ghostty_attention.Command
+typedef struct {
+  ghostty_action_agent_attention_operation_e operation;
+  ghostty_action_agent_attention_kind_e kind;
+} ghostty_action_agent_attention_s;
+
 // apprt.action.StartSearch.C
 typedef struct {
   const char* needle;
@@ -922,6 +942,7 @@ typedef enum {
   GHOSTTY_ACTION_READONLY,
   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
   GHOSTTY_ACTION_COMMAND_RUNNING,
+  GHOSTTY_ACTION_AGENT_ATTENTION,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -964,6 +985,7 @@ typedef union {
   ghostty_action_search_selected_s search_selected;
   ghostty_action_readonly_e readonly;
   bool command_running;
+  ghostty_action_agent_attention_s agent_attention;
 } ghostty_action_u;
 
 typedef struct {

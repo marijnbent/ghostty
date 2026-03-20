@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ghostty Sidebar Mockups — Vol. 2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #141414;
+    color: #d4d4d4;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 13px;
+    min-height: 100vh;
+    padding: 40px 32px 60px;
+  }
+
+  h1 {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 18px;
+    font-weight: 500;
+    color: #e8e8e8;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+
+  .subtitle {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 36px;
+    letter-spacing: 0;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 20px;
+    max-width: 2000px;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .panel-label {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    color: #444;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-left: 2px;
+  }
+
+  .mockup {
+    display: flex;
+    height: 340px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #2a2a2a;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 200px;
+    min-width: 200px;
+    background: #202020;
+    border-right: 1px solid #2a2a2a;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    padding: 10px 10px 6px;
+    border-bottom: 1px solid #2a2a2a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .sidebar-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #888;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .sidebar-icon-btn {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    color: #555;
+    font-size: 11px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .section-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #444;
+    padding: 8px 10px 4px;
+  }
+
+  .ws-row {
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin: 0 4px 1px;
+    cursor: pointer;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    position: relative;
+    transition: background 0.1s;
+  }
+
+  .ws-row.active {
+    background: #2d2d2d;
+  }
+
+  .ws-row.hovered {
+    background: #272727;
+  }
+
+  .ws-row-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ws-name {
+    font-size: 12px;
+    color: #d4d4d4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+  }
+
+  .ws-row.active .ws-name {
+    color: #f0f0f0;
+  }
+
+  .ws-path {
+    font-size: 10px;
+    color: #5a5a5a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+    margin-top: 1px;
+  }
+
+  .ws-row.active .ws-path {
+    color: #686868;
+  }
+
+  .activity-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #3a3a3a;
+    margin-top: 4px;
+    flex-shrink: 0;
+  }
+
+  .activity-dot.active { background: #5bb974; }
+  .activity-dot.running { background: #e6b84a; }
+  .activity-dot.alert { background: #e06c75; }
+  .activity-dot.pulse {
+    background: #5bb974;
+    animation: pulse-dot 1.4s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  .ssh-badge {
+    font-size: 8px;
+    font-weight: 600;
+    color: #7c9fd4;
+    background: rgba(124,159,212,0.12);
+    border: 1px solid rgba(124,159,212,0.2);
+    border-radius: 3px;
+    padding: 1px 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    letter-spacing: 0.04em;
+  }
+
+  /* Terminal content area */
+  .term-area {
+    flex: 1;
+    background: #1a1a1a;
+    padding: 10px 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .term-line {
+    font-size: 11px;
+    color: #5a5a5a;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .term-line.prompt { color: #4a7c59; }
+  .term-line.cmd { color: #8b8b8b; }
+  .term-line.output { color: #555; }
+  .term-line.active-output { color: #9a9a9a; }
+  .term-line.cursor-line {
+    color: #9a9a9a;
+    display: flex;
+    align-items: center;
+  }
+
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 13px;
+    background: #9a9a9a;
+    margin-left: 1px;
+    animation: blink 1.1s step-end infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ===== MOCKUP 1: LAST COMMAND PREVIEW ===== */
+  .last-cmd {
+    font-size: 9.5px;
+    color: #4a4a4a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .ws-row.active .last-cmd { color: #595959; }
+
+  .last-cmd-arrow {
+    color: #3d6b52;
+    font-size: 8px;
+    flex-shrink: 0;
+  }
+
+  .ws-row.active .last-cmd-arrow { color: #5bb974; }
+
+  /* ===== MOCKUP 2: OUTPUT STREAM PREVIEW ===== */
+  .ws-row.expanded {
+    flex-direction: column;
+    align-items: stretch;
+    background: #282828;
+    padding-bottom: 0;
+    border: 1px solid #333;
+    margin-bottom: 2px;
+  }
+
+  .ws-row.expanded .ws-row-top {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .mini-term {
+    margin-top: 5px;
+    background: #1c1c1c;
+    border-radius: 3px;
+    padding: 5px 6px;
+    margin-left: -8px;
+    margin-right: -8px;
+    border-top: 1px solid #2a2a2a;
+  }
+
+  .mini-term-line {
+    font-size: 9px;
+    color: #4d8c5e;
+    line-height: 1.55;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mini-term-line.ok { color: #4d8c5e; }
+  .mini-term-line.warn { color: #8c7a3d; }
+  .mini-term-line.err { color: #8c4d4d; }
+  .mini-term-line.muted { color: #444; }
+
+  .chevron-btn {
+    font-size: 9px;
+    color: #4a4a4a;
+    flex-shrink: 0;
+    margin-top: 4px;
+    cursor: pointer;
+  }
+
+  .ws-row.expanded .chevron-btn {
+    transform: rotate(90deg);
+    color: #666;
+  }
+
+  /* ===== MOCKUP 3: TIME SINCE LAST ACTIVITY ===== */
+  .ws-timestamp {
+    font-size: 9px;
+    color: #3d3d3d;
+    flex-shrink: 0;
+    margin-top: 3px;
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ws-row.active .ws-timestamp { color: #4f8a62; }
+  .ws-row.hovered .ws-timestamp { color: #565656; }
+
+  /* ===== MOCKUP 4: COLOR TAGS ===== */
+  .color-stripe {
+    width: 2.5px;
+    border-radius: 2px;
+    align-self: stretch;
+    flex-shrink: 0;
+    margin: 2px 0;
+  }
+
+  .palette-picker {
+    display: flex;
+    gap: 4px;
+    padding: 5px 8px;
+    background: #2a2a2a;
+    border: 1px solid #333;
+    border-radius: 5px;
+    margin: 2px 4px 4px;
+  }
+
+  .color-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 1.5px solid transparent;
+  }
+
+  .color-swatch.selected {
+    border-color: #e8e8e8;
+    box-shadow: 0 0 0 1.5px #1e1e1e;
+  }
+
+  /* ===== MOCKUP 5: GIT BRANCH ===== */
+  .git-badge {
+    font-size: 8.5px;
+    color: #7a9f6a;
+    background: rgba(90,180,100,0.08);
+    border: 1px solid rgba(90,180,100,0.18);
+    border-radius: 3px;
+    padding: 1px 5px 1px 4px;
+    flex-shrink: 0;
+    margin-top: 1px;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    max-width: 80px;
+    overflow: hidden;
+  }
+
+  .git-badge.dirty {
+    color: #c78c6a;
+    background: rgba(200,130,80,0.08);
+    border-color: rgba(200,130,80,0.2);
+  }
+
+  .git-symbol {
+    font-size: 9px;
+    opacity: 0.8;
+    flex-shrink: 0;
+  }
+
+  .git-branch-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ===== MOCKUP 6: CONNECTION HEALTH ===== */
+  .health-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .health-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .health-dot.ok { background: #5bb974; }
+  .health-dot.warn { background: #e6b84a; animation: pulse-dot 1.4s ease-in-out infinite; }
+  .health-dot.err { background: #e06c75; }
+
+  .latency-text {
+    font-size: 8px;
+    color: #9a7a3a;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .reconnect-btn {
+    font-size: 8px;
+    color: #7a7aee;
+    background: rgba(120,120,238,0.1);
+    border: 1px solid rgba(120,120,238,0.2);
+    border-radius: 3px;
+    padding: 2px 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+
+  .proc-count {
+    font-size: 8px;
+    color: #444;
+    white-space: nowrap;
+  }
+
+  /* ===== MOCKUP 7: PINNING ===== */
+  .pin-indicator {
+    font-size: 8px;
+    color: #5a7aaa;
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+
+  .ws-row.pinned {
+    border-left: 2px solid rgba(90,122,170,0.35);
+    margin-left: 4px;
+    padding-left: 6px;
+  }
+
+  .pin-hover {
+    font-size: 9px;
+    color: #5a5a5a;
+    flex-shrink: 0;
+    margin-top: 3px;
+    opacity: 0;
+  }
+
+  .ws-row.hovered .pin-hover {
+    opacity: 1;
+    color: #6a6a6a;
+  }
+
+  /* ===== MOCKUP 8: FOCUS MODE ===== */
+  .focus-bar {
+    padding: 6px 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-bottom: 1px solid #2a2a2a;
+    flex-shrink: 0;
+  }
+
+  .focus-toggle {
+    flex: 1;
+    font-size: 9.5px;
+    color: #555;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  .focus-toggle.on {
+    color: #7ab4e0;
+  }
+
+  .toggle-pill {
+    width: 22px;
+    height: 12px;
+    border-radius: 6px;
+    background: #333;
+    border: 1px solid #444;
+    position: relative;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+
+  .toggle-pill.on {
+    background: #2a5a7a;
+    border-color: #4a8aaa;
+  }
+
+  .toggle-knob {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #666;
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    transition: left 0.15s, background 0.15s;
+  }
+
+  .toggle-pill.on .toggle-knob {
+    left: 11px;
+    background: #7ab4e0;
+  }
+
+  .collapsed-row {
+    padding: 5px 8px;
+    margin: 2px 4px;
+    border-radius: 4px;
+    border: 1px dashed #2d2d2d;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .collapsed-count {
+    font-size: 10px;
+    color: #4a4a4a;
+    flex: 1;
+  }
+
+  .collapsed-expand {
+    font-size: 9px;
+    color: #3a5a7a;
+    cursor: pointer;
+  }
+
+  /* ===== MOCKUP 9: NOTES / LABELS ===== */
+  .ws-note {
+    font-size: 9.5px;
+    color: #4a6a50;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+  }
+
+  .ws-note.empty {
+    color: #333;
+    font-style: normal;
+  }
+
+  .ws-row.hovered .ws-note.empty {
+    color: #484848;
+  }
+
+  .ws-note-input {
+    font-size: 9.5px;
+    color: #6ab47a;
+    font-style: italic;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #3d6b52;
+    outline: none;
+    width: 100%;
+    font-family: inherit;
+    padding: 0;
+    margin-top: 1px;
+  }
+
+  /* ===== MOCKUP 10: SPLIT / PANE INDICATOR ===== */
+  .pane-icon {
+    display: grid;
+    width: 14px;
+    height: 14px;
+    gap: 1px;
+    flex-shrink: 0;
+    margin-top: 3px;
+    cursor: pointer;
+    opacity: 0.45;
+  }
+
+  .pane-icon:hover { opacity: 0.75; }
+
+  .pane-icon.layout-1 {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .pane-icon.layout-2h {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .pane-icon.layout-3 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .pane-icon.layout-4 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+
+  .pane-cell {
+    background: #5a8a6a;
+    border-radius: 1px;
+  }
+
+  .pane-cell.wide {
+    grid-column: span 2;
+  }
+
+  .pane-icon.active-pane { opacity: 0.85; }
+  .pane-icon.active-pane .pane-cell { background: #6ab47a; }
+
+  /* ===== SHARED HELPERS ===== */
+  .flex-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .flex-end {
+    margin-left: auto;
+  }
+
+  .divider {
+    height: 1px;
+    background: #262626;
+    margin: 3px 6px;
+  }
+
+  .sidebar-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 8px;
+  }
+
+  /* Spinner animation */
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  .spinner {
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+    font-size: 9px;
+  }
+
+  /* Shimmer for live output */
+  @keyframes shimmer {
+    0% { opacity: 0.4; }
+    50% { opacity: 1; }
+    100% { opacity: 0.4; }
+  }
+
+  .live-badge {
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #e6b84a;
+    background: rgba(230,184,74,0.1);
+    border: 1px solid rgba(230,184,74,0.2);
+    border-radius: 2px;
+    padding: 0px 3px;
+    flex-shrink: 0;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  /* Scrollbar */
+  .sidebar-scroll::-webkit-scrollbar { width: 3px; }
+  .sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>Ghostty Sidebar Mockups — Vol. 2</h1>
+<p class="subtitle">10 novel workspace sidebar features — static mockups with implied interaction states</p>
+
+<div class="grid">
+
+  <!-- ===== 1. LAST COMMAND PREVIEW ===== -->
+  <div class="panel">
+    <div class="panel-label">1. Last Command Preview</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active">
+            <div class="activity-dot active"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+              <div class="last-cmd"><span class="last-cmd-arrow">▸</span> cargo build --release</div>
+            </div>
+          </div>
+          <div class="ws-row hovered">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+              <div class="last-cmd"><span class="last-cmd-arrow">▸</span> nvim init.lua</div>
+            </div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">deploy</div>
+              <div class="ws-path">prod-server-01</div>
+              <div class="last-cmd"><span class="last-cmd-arrow">▸</span> systemctl restart app</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">scripts</div>
+              <div class="ws-path">~/bin</div>
+              <div class="last-cmd"><span class="last-cmd-arrow">▸</span> ./backup.sh --dry-run</div>
+            </div>
+          </div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">notes</div>
+              <div class="ws-path">~/Documents</div>
+              <div class="last-cmd"><span class="last-cmd-arrow">▸</span> ls -la</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">~/Projects/ghostty</div>
+        <div class="term-line cmd">$ cargo build --release</div>
+        <div class="term-line output">   Compiling ghostty v0.1.0</div>
+        <div class="term-line output">   Compiling termio v2.3.1</div>
+        <div class="term-line active-output">   Compiling renderer v1.0.0</div>
+        <div class="term-line cursor-line">  <span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 2. OUTPUT STREAM PREVIEW ===== -->
+  <div class="panel">
+    <div class="panel-label">2. Output Stream Preview</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <!-- Expanded row with live preview -->
+          <div class="ws-row expanded">
+            <div class="ws-row-top">
+              <div class="activity-dot running" style="margin-top:4px;"></div>
+              <div class="ws-row-content">
+                <div class="ws-name" style="display:flex;align-items:center;gap:5px;">
+                  build
+                  <span class="live-badge">LIVE</span>
+                </div>
+                <div class="ws-path">~/Projects/app</div>
+              </div>
+              <span class="chevron-btn">›</span>
+            </div>
+            <div class="mini-term">
+              <div class="mini-term-line muted">— webpack output stream —</div>
+              <div class="mini-term-line ok">✓ Module compiled: index.ts</div>
+              <div class="mini-term-line warn">⚠ chunk size: 542kb</div>
+              <div class="mini-term-line ok">✓ emit: dist/main.js<span class="cursor" style="width:5px;height:9px;"></span></div>
+            </div>
+          </div>
+          <div class="ws-row active">
+            <div class="activity-dot active"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">editor</div>
+              <div class="ws-path">~/Projects/app</div>
+            </div>
+            <span class="chevron-btn" style="opacity:0.3;">›</span>
+          </div>
+          <div class="section-label">Inactive</div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">server</div>
+              <div class="ws-path">localhost:3000</div>
+            </div>
+            <span class="chevron-btn" style="opacity:0.3;">›</span>
+          </div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">tests</div>
+              <div class="ws-path">~/Projects/app</div>
+            </div>
+            <span class="chevron-btn" style="opacity:0.3;">›</span>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">~/Projects/app</div>
+        <div class="term-line cmd">$ npm run build:watch</div>
+        <div class="term-line output">webpack 5.89.0 compiled</div>
+        <div class="term-line output">watching for changes...</div>
+        <div class="term-line active-output">change detected: src/api.ts</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 3. TIME SINCE LAST ACTIVITY ===== -->
+  <div class="panel">
+    <div class="panel-label">3. Time Since Last Activity</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active" style="align-items:flex-start;">
+            <div class="activity-dot active" style="margin-top:4px;"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+            <div class="ws-timestamp" style="color:#4f8a62;">now</div>
+          </div>
+          <div class="section-label">Inactive <span style="font-size:8px;opacity:0.5;text-transform:none;letter-spacing:0;margin-left:3px;">by recency</span></div>
+          <div class="ws-row hovered" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">deploy</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="ws-timestamp" style="color:#565656;">2m</div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+            </div>
+            <div class="ws-timestamp">18m</div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">api-logs</div>
+              <div class="ws-path">~/logs</div>
+            </div>
+            <div class="ws-timestamp">2h</div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">scratch</div>
+              <div class="ws-path">~/tmp</div>
+            </div>
+            <div class="ws-timestamp">1d</div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">~/Projects/ghostty</div>
+        <div class="term-line cmd">$ git log --oneline -5</div>
+        <div class="term-line output">a3f1c2d fix: surface leak</div>
+        <div class="term-line output">b9d2e1f feat: workspace api</div>
+        <div class="term-line output">c4a8f3e refactor: renderer</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 4. COLOR TAGS ===== -->
+  <div class="panel">
+    <div class="panel-label">4. Workspace Color Tags</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active" style="padding-left:5px;">
+            <div class="color-stripe" style="background:#e06c75;"></div>
+            <div class="activity-dot active"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">production</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <div class="ws-row" style="padding-left:5px;">
+            <div class="color-stripe" style="background:#5bb974;"></div>
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+          </div>
+          <!-- Right-click context: palette shown -->
+          <div class="ws-row hovered" style="padding-left:5px;flex-direction:column;align-items:stretch;background:#272727;border:1px solid #333;margin:0 4px 2px;">
+            <div style="display:flex;align-items:flex-start;gap:6px;">
+              <div class="color-stripe" style="background:#e6b84a;"></div>
+              <div class="activity-dot" style="margin-top:4px;"></div>
+              <div class="ws-row-content">
+                <div class="ws-name">staging</div>
+                <div class="ws-path">stage-server-02</div>
+              </div>
+              <div class="ssh-badge">SSH</div>
+            </div>
+            <div class="palette-picker">
+              <div class="color-swatch" style="background:#e06c75;"></div>
+              <div class="color-swatch" style="background:#e6b84a; border-color:#e8e8e8; box-shadow: 0 0 0 1.5px #202020;"></div>
+              <div class="color-swatch" style="background:#5bb974;"></div>
+              <div class="color-swatch" style="background:#7ab4e0;"></div>
+              <div class="color-swatch" style="background:#b48ead;"></div>
+              <div class="color-swatch" style="background:#7aaeaa;"></div>
+              <div class="color-swatch" style="background:#d08060;"></div>
+              <div class="color-swatch" style="background:#555; border: 1.5px solid #444;"></div>
+            </div>
+          </div>
+          <div class="ws-row" style="padding-left:5px;">
+            <div class="color-stripe" style="background:#7ab4e0;"></div>
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">prod-server-01</div>
+        <div class="term-line cmd">$ tail -f /var/log/app.log</div>
+        <div class="term-line output">[INFO] request: GET /api/v2</div>
+        <div class="term-line active-output">[WARN] slow query: 2340ms</div>
+        <div class="term-line output">[INFO] request: POST /api/v2</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 5. GIT BRANCH INDICATOR ===== -->
+  <div class="panel">
+    <div class="panel-label">5. Git Branch Indicator</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active" style="flex-wrap:wrap;align-items:flex-start;">
+            <div class="activity-dot active" style="margin-top:4px;"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+            <div class="git-badge dirty">
+              <span class="git-symbol">⎇</span>
+              <span class="git-branch-text">feat/workspaces</span>
+            </div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <div class="ws-row hovered" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">my-app</div>
+              <div class="ws-path">~/Projects/my-app</div>
+            </div>
+            <div class="git-badge">
+              <span class="git-symbol">⎇</span>
+              <span class="git-branch-text">main</span>
+            </div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+            </div>
+            <div class="git-badge">
+              <span class="git-symbol">⎇</span>
+              <span class="git-branch-text">main</span>
+            </div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">api</div>
+              <div class="ws-path">~/Projects/api</div>
+            </div>
+            <div class="git-badge dirty">
+              <span class="git-symbol">⎇</span>
+              <span class="git-branch-text">fix/crash</span>
+            </div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">deploy</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">~/Projects/ghostty</div>
+        <div class="term-line cmd">$ git status</div>
+        <div class="term-line output">On branch feat/workspaces</div>
+        <div class="term-line active-output">Changes not staged:</div>
+        <div class="term-line output">  modified: src/workspace.rs</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 6. CONNECTION HEALTH ===== -->
+  <div class="panel">
+    <div class="panel-label">6. Reconnect / Connection Health</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active" style="align-items:flex-start;">
+            <div class="activity-dot active" style="margin-top:4px;"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">local</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+            <div class="health-indicator">
+              <div class="proc-count">4 proc</div>
+            </div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <!-- Connected -->
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">prod-01</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+            <div class="health-indicator" style="margin-left:3px;">
+              <div class="health-dot ok"></div>
+            </div>
+          </div>
+          <!-- Laggy -->
+          <div class="ws-row hovered" style="align-items:flex-start;">
+            <div class="activity-dot running"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">eu-west</div>
+              <div class="ws-path">eu-worker-03</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+            <div class="health-indicator" style="margin-left:3px;">
+              <div class="health-dot warn"></div>
+              <div class="latency-text">124ms</div>
+            </div>
+          </div>
+          <!-- Disconnected -->
+          <div class="ws-row" style="align-items:flex-start;flex-direction:column;background:#1e1e1e;border:1px solid #2a2a2a;margin:0 4px 2px;border-radius:4px;padding:6px 8px;">
+            <div style="display:flex;align-items:flex-start;gap:6px;width:100%;">
+              <div class="health-dot err" style="margin-top:4px;"></div>
+              <div class="ws-row-content">
+                <div class="ws-name" style="color:#9a5a5a;">staging</div>
+                <div class="ws-path">stage-server-02</div>
+              </div>
+              <div class="ssh-badge" style="color:#9a7070;border-color:rgba(155,100,100,0.2);background:rgba(155,100,100,0.08);">SSH</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:5px;margin-top:4px;margin-left:12px;">
+              <div class="reconnect-btn"><span class="spinner">↺</span> Reconnect</div>
+              <div style="font-size:8px;color:#3a3a3a;">lost 3m ago</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line output">Connection to stage-server-02</div>
+        <div class="term-line output">closed.</div>
+        <div class="term-line" style="color:#3d3d3d;margin-top:8px;">—</div>
+        <div class="term-line" style="color:#4a4a4a;font-size:10px;margin-top:4px;">session suspended</div>
+        <div class="term-line" style="color:#3a3a3a;font-size:10px;">reconnect to resume</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 7. PINNING + SECTIONS ===== -->
+  <div class="panel">
+    <div class="panel-label">7. Workspace Pinning + Sections</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Pinned</div>
+          <div class="ws-row pinned active" style="align-items:flex-start;">
+            <div class="activity-dot active" style="margin-top:4px;"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">production</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="pin-indicator">📌</div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+          <div class="ws-row pinned" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+            <div class="pin-indicator">📌</div>
+          </div>
+          <div class="divider"></div>
+          <div class="section-label">Active</div>
+          <div class="ws-row hovered" style="align-items:flex-start;">
+            <div class="activity-dot running"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">build</div>
+              <div class="ws-path">~/Projects/app</div>
+            </div>
+            <div class="pin-hover" title="Pin workspace">📌</div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+            </div>
+            <div class="pin-hover">📌</div>
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">scratch</div>
+              <div class="ws-path">~/tmp</div>
+            </div>
+            <div class="pin-hover">📌</div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">prod-server-01</div>
+        <div class="term-line cmd">$ uptime</div>
+        <div class="term-line output"> 14:22  up 47 days, 3:18,</div>
+        <div class="term-line output"> load avg: 0.42 0.38 0.31</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 8. FOCUS MODE ===== -->
+  <div class="panel">
+    <div class="panel-label">8. Focus / Hide Others Mode</div>
+    <div class="mockup">
+      <div class="sidebar" style="width:200px;min-width:200px;">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <!-- Focus toggle bar -->
+        <div class="focus-bar">
+          <div class="focus-toggle on">
+            <div class="toggle-pill on">
+              <div class="toggle-knob"></div>
+            </div>
+            <span>Focus mode</span>
+          </div>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active">
+            <div class="activity-dot active"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+          </div>
+          <div class="divider" style="margin-top:6px;"></div>
+          <div class="collapsed-row">
+            <div style="font-size:10px;color:#3a3a3a;">━━</div>
+            <div class="collapsed-count">7 workspaces hidden</div>
+            <div class="collapsed-expand">show ›</div>
+          </div>
+          <!-- Off-state preview below -->
+          <div class="divider" style="margin: 10px 6px 4px;border-bottom: 1px dashed #252525;height:0;background:none;"></div>
+          <div class="section-label" style="color:#2e2e2e;">Focus off — all shown</div>
+          <div class="focus-bar" style="padding:4px 6px;">
+            <div class="focus-toggle">
+              <div class="toggle-pill">
+                <div class="toggle-knob"></div>
+              </div>
+              <span style="color:#3a3a3a;">Focus mode</span>
+            </div>
+          </div>
+          <div class="ws-row" style="opacity:0.4;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name" style="font-size:10px;">deploy</div>
+            </div>
+          </div>
+          <div class="ws-row" style="opacity:0.4;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name" style="font-size:10px;">dotfiles</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">~/Projects/ghostty</div>
+        <div class="term-line cmd">$ cargo test workspace</div>
+        <div class="term-line output">running 12 tests</div>
+        <div class="term-line output">test workspace::basic ... ok</div>
+        <div class="term-line active-output">test workspace::pin ... ok</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 9. WORKSPACE NOTES ===== -->
+  <div class="panel">
+    <div class="panel-label">9. Workspace Notes / Labels</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <div class="ws-row active">
+            <div class="activity-dot active"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+              <div class="ws-note">"workspace sidebar feature"</div>
+            </div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <!-- Row with note being edited (inline) -->
+          <div class="ws-row hovered" style="flex-direction:column;align-items:stretch;background:#272727;border:1px solid #333;margin:0 4px 2px;border-radius:4px;padding:6px 8px;">
+            <div style="display:flex;align-items:flex-start;gap:6px;">
+              <div class="activity-dot" style="margin-top:4px;"></div>
+              <div class="ws-row-content">
+                <div class="ws-name">prod-deploy</div>
+                <div class="ws-path">prod-server-01</div>
+                <input class="ws-note-input" value="deployment server — eu-w" readonly />
+              </div>
+              <div class="ssh-badge">SSH</div>
+            </div>
+          </div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">staging</div>
+              <div class="ws-path">stage-server-02</div>
+              <div class="ws-note">"debugging auth issue"</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+          <div class="ws-row hovered" style="background:#252525;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">random-host-7</div>
+              <div class="ws-path">192.168.1.47</div>
+              <div class="ws-note empty">+ add note</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+          </div>
+          <div class="ws-row">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+              <div class="ws-note">"nvim + zsh config"</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="term-area">
+        <div class="term-line prompt">prod-server-01</div>
+        <div class="term-line cmd">$ df -h /</div>
+        <div class="term-line output">Filesystem  Size  Used Avail</div>
+        <div class="term-line output">/dev/sda1   100G   67G   33G</div>
+        <div class="term-line cursor-line"><span class="cursor"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 10. SPLIT / PANE INDICATOR ===== -->
+  <div class="panel">
+    <div class="panel-label">10. Split / Pane Indicator</div>
+    <div class="mockup">
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">Workspaces</span>
+          <span class="sidebar-icon-btn">+</span>
+        </div>
+        <div class="sidebar-scroll">
+          <div class="section-label">Active</div>
+          <!-- 3 panes -->
+          <div class="ws-row active" style="align-items:flex-start;">
+            <div class="activity-dot active" style="margin-top:4px;"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">ghostty</div>
+              <div class="ws-path">~/Projects/ghostty</div>
+            </div>
+            <!-- 3-pane: left full + right split top/bottom -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;width:14px;height:14px;gap:1px;margin-top:3px;flex-shrink:0;cursor:pointer;opacity:0.9;" title="3 panes">
+              <div style="background:#6ab47a;border-radius:1px;grid-row:span 2;"></div>
+              <div style="background:#4d8c5e;border-radius:1px;"></div>
+              <div style="background:#4d8c5e;border-radius:1px;"></div>
+            </div>
+          </div>
+          <div class="section-label">Inactive</div>
+          <!-- 2 panes side by side -->
+          <div class="ws-row hovered" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">build</div>
+              <div class="ws-path">~/Projects/app</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr;width:14px;height:14px;gap:1px;margin-top:3px;flex-shrink:0;cursor:pointer;opacity:0.55;">
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+            </div>
+          </div>
+          <!-- 4 pane grid -->
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">monitor</div>
+              <div class="ws-path">~/Projects</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;width:14px;height:14px;gap:1px;margin-top:3px;flex-shrink:0;cursor:pointer;opacity:0.4;">
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+              <div style="background:#5a8a6a;border-radius:1px;"></div>
+            </div>
+          </div>
+          <!-- 1 pane (no icon) -->
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">deploy</div>
+              <div class="ws-path">prod-server-01</div>
+            </div>
+            <div class="ssh-badge">SSH</div>
+            <!-- no pane icon for single -->
+          </div>
+          <div class="ws-row" style="align-items:flex-start;">
+            <div class="activity-dot"></div>
+            <div class="ws-row-content">
+              <div class="ws-name">dotfiles</div>
+              <div class="ws-path">~/.config</div>
+            </div>
+            <!-- 1 pane, no icon -->
+          </div>
+        </div>
+      </div>
+      <!-- Terminal showing 3-pane layout hint -->
+      <div class="term-area" style="display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:1px;padding:0;background:#111;">
+        <div style="background:#1a1a1a;padding:8px 10px;grid-row:span 2;display:flex;flex-direction:column;gap:2px;border-right:1px solid #222;">
+          <div class="term-line prompt" style="font-size:10px;">~/ghostty</div>
+          <div class="term-line cmd" style="font-size:10px;">$ nvim</div>
+          <div class="term-line" style="color:#3d5e48;font-size:9px;">-- INSERT --</div>
+          <div class="term-line" style="color:#4a4a4a;font-size:9px;margin-top:4px;">fn workspace()</div>
+          <div class="term-line" style="color:#4a4a4a;font-size:9px;">  let id = ...</div>
+          <div style="display:inline-block;width:5px;height:10px;background:#5a5a5a;margin-top:2px;animation:blink 1.1s step-end infinite;"></div>
+        </div>
+        <div style="background:#181818;padding:8px 10px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid #222;">
+          <div class="term-line prompt" style="font-size:10px;">~/ghostty</div>
+          <div class="term-line cmd" style="font-size:10px;">$ cargo build</div>
+          <div class="term-line" style="color:#4d8c5e;font-size:9px;"> Compiling...</div>
+        </div>
+        <div style="background:#1c1c1c;padding:8px 10px;display:flex;flex-direction:column;gap:2px;">
+          <div class="term-line prompt" style="font-size:10px;">~/ghostty</div>
+          <div class="term-line" style="color:#4a4a4a;font-size:9px;">$ git diff</div>
+          <div class="term-line" style="color:#3d5e3d;font-size:9px;">+  pub fn new()</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

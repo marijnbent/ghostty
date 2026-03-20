@@ -65,6 +65,9 @@ extension Ghostty {
         // Whether the shell has reported that a command is currently running.
         @Published var isCommandRunning: Bool = false
 
+        // Persistent agent attention state for this surface, if any.
+        @Published var agentAttentionState: Ghostty.Action.AgentAttention.Kind?
+
         // The currently active key sequence. The sequence is not active if this is empty.
         @Published var keySequence: [KeyboardShortcut] = []
 
@@ -577,7 +580,11 @@ extension Ghostty {
 
             // Add a text field to the alert
             let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
-            textField.stringValue = title
+            textField.stringValue = WorkspaceTitlePresentation.displayTitle(
+                titleOverride: titleFromTerminal != nil ? title : nil,
+                computedTitle: title,
+                location: pwd
+            )
             alert.accessoryView = textField
 
             // Add buttons

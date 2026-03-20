@@ -15,9 +15,21 @@ struct WorkspaceRemoteSession: Equatable {
 enum WorkspaceRemoteSessionKind: String, Equatable {
     case ssh
     case mosh
+    case claude
+    case codex
+    case opencode
 
     var badgeLabel: String {
         rawValue.uppercased()
+    }
+
+    var usesSidebarIcon: Bool {
+        switch self {
+        case .claude, .codex:
+            true
+        default:
+            false
+        }
     }
 
     static func detect(in title: String) -> Self? {
@@ -91,6 +103,15 @@ private enum WorkspaceRemoteSessionParser {
 
             case "mosh", "mosh-client", "mosh-server":
                 return parseMosh(tokens, startIndex: index + 1)
+
+            case "claude", "cl":
+                return .init(kind: .claude, target: nil)
+
+            case "codex", "co", "c":
+                return .init(kind: .codex, target: nil)
+
+            case "opencode":
+                return .init(kind: .opencode, target: nil)
 
             default:
                 return nil
@@ -328,7 +349,15 @@ class BaseTerminalController: NSWindowController,
     /// The current location shown beneath the workspace title.
     private(set) var workspaceLocation: String?
 
-    /// Tracks active SSH or mosh sessions per surface in this workspace.
+    var displayTitle: String {
+        WorkspaceTitlePresentation.displayTitle(
+            titleOverride: titleOverride,
+            computedTitle: lastComputedTitle,
+            location: workspaceLocation
+        )
+    }
+
+    /// Tracks active SSH, mosh, or supported CLI sessions per surface in this workspace.
     private(set) var workspaceRemoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSession] = [:]
 
     /// The last time this workspace observed shell or user activity.
@@ -622,7 +651,7 @@ class BaseTerminalController: NSWindowController,
         alert.alertStyle = .informational
 
         let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 250, height: 24))
-        textField.stringValue = titleOverride ?? window.title
+        textField.stringValue = displayTitle
         alert.accessoryView = textField
 
         alert.addButton(withTitle: "OK")
@@ -1153,7 +1182,7 @@ class BaseTerminalController: NSWindowController,
             return
         }
 
-        window.title = lastComputedTitle
+        window.title = displayTitle
     }
 
     func pwdDidChange(to: URL?) {

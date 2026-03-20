@@ -97,6 +97,9 @@ pub const Command = union(Key) {
         body: [:0]const u8,
     },
 
+    /// Ghostty private attention signalling (OSC 99).
+    ghostty_attention: parsers.ghostty_attention.Command,
+
     /// Start a hyperlink (OSC 8)
     hyperlink_start: struct {
         id: ?[:0]const u8 = null,
@@ -163,6 +166,7 @@ pub const Command = union(Key) {
     pub const SemanticPrompt = parsers.semantic_prompt.Command;
 
     pub const KittyClipboardProtocol = parsers.kitty_clipboard_protocol.OSC;
+    pub const GhosttyAttention = parsers.ghostty_attention.Command;
 
     pub const Key = LibEnum(
         if (build_options.c_abi) .c else .zig,
@@ -178,6 +182,7 @@ pub const Command = union(Key) {
             "color_operation",
             "kitty_color_protocol",
             "show_desktop_notification",
+            "ghostty_attention",
             "hyperlink_start",
             "hyperlink_end",
             "conemu_sleep",
@@ -327,6 +332,7 @@ pub const Parser = struct {
         @"7",
         @"8",
         @"9",
+        @"99",
         @"30",
         @"300",
         @"3008",
@@ -422,6 +428,7 @@ pub const Parser = struct {
             .report_pwd,
             .semantic_prompt,
             .show_desktop_notification,
+            .ghostty_attention,
             .kitty_text_sizing,
             .kitty_clipboard_protocol,
             .context_signal,
@@ -673,8 +680,18 @@ pub const Parser = struct {
             .@"22",
             .@"777",
             .@"8",
-            .@"9",
             => switch (c) {
+                ';' => self.writeToFixed(),
+                else => self.state = .invalid,
+            },
+
+            .@"9" => switch (c) {
+                ';' => self.writeToFixed(),
+                '9' => self.state = .@"99",
+                else => self.state = .invalid,
+            },
+
+            .@"99" => switch (c) {
                 ';' => self.writeToFixed(),
                 else => self.state = .invalid,
             },
@@ -730,6 +747,8 @@ pub const Parser = struct {
             .@"8" => parsers.hyperlink.parse(self, terminator_ch),
 
             .@"9" => parsers.osc9.parse(self, terminator_ch),
+
+            .@"99" => parsers.ghostty_attention.parse(self, terminator_ch),
 
             .@"21" => parsers.kitty_color.parse(self, terminator_ch),
 

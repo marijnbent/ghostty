@@ -759,6 +759,7 @@ pub const Application = extern struct {
             .show_on_screen_keyboard => return Action.showOnScreenKeyboard(target),
             .command_finished => return Action.commandFinished(target, value),
             .command_running => return Action.commandRunning(target, value),
+            .agent_attention => return Action.agentAttention(target, value),
             .readonly => return Action.setReadonly(target, value),
 
             .start_search => Action.startSearch(target, value),
@@ -2770,6 +2771,13 @@ const Action = struct {
     }
 
     pub fn commandRunning(target: apprt.Target, _: apprt.Action.Value(.command_running)) bool {
+        return switch (target) {
+            .app => false,
+            .surface => true,
+        };
+    }
+
+    pub fn agentAttention(target: apprt.Target, _: apprt.Action.Value(.agent_attention)) bool {
         return switch (target) {
             .app => false,
             .surface => true,

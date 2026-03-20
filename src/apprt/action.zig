@@ -346,6 +346,9 @@ pub const Action = union(Key) {
     /// Whether a shell command is currently running in the target surface.
     command_running: bool,
 
+    /// Attention state signalled by a process running in the target surface.
+    agent_attention: terminal.osc.Command.GhosttyAttention,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -414,6 +417,7 @@ pub const Action = union(Key) {
         readonly,
         copy_title_to_clipboard,
         command_running,
+        agent_attention,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
@@ -974,6 +978,8 @@ pub const CommandFinished = struct {
         };
     }
 };
+
+pub const AgentAttention = terminal.osc.Command.GhosttyAttention;
 
 pub const StartSearch = struct {
     needle: [:0]const u8,

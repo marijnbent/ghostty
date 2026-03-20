@@ -91,6 +91,9 @@ pub const Message = union(enum) {
     /// Report the progress of an action using a GUI element
     progress_report: terminal.osc.Command.ProgressReport,
 
+    /// Report agent attention state for this surface.
+    ghostty_attention: terminal.osc.Command.GhosttyAttention,
+
     /// A command has started in the shell, start a timer.
     start_command,
 

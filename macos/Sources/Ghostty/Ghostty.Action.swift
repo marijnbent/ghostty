@@ -6,6 +6,16 @@ extension Ghostty {
 }
 
 extension Ghostty.Action {
+    struct CommandFinished {
+        let exitCode: Int?
+        let duration: Duration
+
+        var succeeded: Bool? {
+            guard let exitCode else { return nil }
+            return exitCode == 0
+        }
+    }
+
     struct ColorChange {
         let kind: Kind
         let color: Color
@@ -104,6 +114,64 @@ extension Ghostty.Action {
         let progress: UInt8?
     }
 
+    struct AgentAttention {
+        enum Operation {
+            case set
+            case emit
+            case clear
+
+            init?(_ c: ghostty_action_agent_attention_operation_e) {
+                switch c {
+                case GHOSTTY_AGENT_ATTENTION_SET:
+                    self = .set
+                case GHOSTTY_AGENT_ATTENTION_EMIT:
+                    self = .emit
+                case GHOSTTY_AGENT_ATTENTION_CLEAR:
+                    self = .clear
+                default:
+                    return nil
+                }
+            }
+        }
+
+        enum Kind: Comparable {
+            case agentNeedsInput
+            case agentPlanReady
+            case agentDone
+
+            init?(_ c: ghostty_action_agent_attention_kind_e) {
+                switch c {
+                case GHOSTTY_AGENT_ATTENTION_AGENT_NEEDS_INPUT:
+                    self = .agentNeedsInput
+                case GHOSTTY_AGENT_ATTENTION_AGENT_PLAN_READY:
+                    self = .agentPlanReady
+                case GHOSTTY_AGENT_ATTENTION_AGENT_DONE:
+                    self = .agentDone
+                default:
+                    return nil
+                }
+            }
+
+            private var priority: Int {
+                switch self {
+                case .agentNeedsInput:
+                    3
+                case .agentPlanReady:
+                    2
+                case .agentDone:
+                    1
+                }
+            }
+
+            static func < (lhs: Self, rhs: Self) -> Bool {
+                lhs.priority < rhs.priority
+            }
+        }
+
+        let operation: Operation
+        let kind: Kind
+    }
+
     struct Scrollbar {
         let total: UInt64
         let offset: UInt64
@@ -169,5 +237,20 @@ extension Ghostty.Action.ProgressReport {
     init(c: ghostty_action_progress_report_s) {
         self.state = State(c.state)
         self.progress = c.progress >= 0 ? UInt8(c.progress) : nil
+    }
+}
+
+extension Ghostty.Action.CommandFinished {
+    init(c: ghostty_action_command_finished_s) {
+        self.exitCode = c.exit_code >= 0 ? Int(c.exit_code) : nil
+        self.duration = .nanoseconds(c.duration)
+    }
+}
+
+extension Ghostty.Action.AgentAttention {
+    init?(c: ghostty_action_agent_attention_s) {
+        guard let operation = Operation(c.operation), let kind = Kind(c.kind) else { return nil }
+        self.operation = operation
+        self.kind = kind
     }
 }

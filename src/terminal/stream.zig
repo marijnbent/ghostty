@@ -117,6 +117,7 @@ pub const Action = union(Key) {
     window_title: WindowTitle,
     report_pwd: ReportPwd,
     show_desktop_notification: ShowDesktopNotification,
+    ghostty_attention: osc.Command.GhosttyAttention,
     progress_report: osc.Command.ProgressReport,
     start_hyperlink: StartHyperlink,
     clipboard_contents: ClipboardContents,
@@ -214,6 +215,7 @@ pub const Action = union(Key) {
             "window_title",
             "report_pwd",
             "show_desktop_notification",
+            "ghostty_attention",
             "progress_report",
             "start_hyperlink",
             "clipboard_contents",
@@ -2028,6 +2030,10 @@ pub fn Stream(comptime Handler: type) type {
                         .title = v.title,
                         .body = v.body,
                     });
+                },
+
+                .ghostty_attention => |v| {
+                    self.handler.vt(.ghostty_attention, v);
                 },
 
                 .hyperlink_start => |v| {

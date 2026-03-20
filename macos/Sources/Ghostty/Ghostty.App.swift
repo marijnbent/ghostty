@@ -653,6 +653,9 @@ extension Ghostty {
             case GHOSTTY_ACTION_COMMAND_RUNNING:
                 setCommandRunning(app, target: target, v: action.action.command_running)
 
+            case GHOSTTY_ACTION_AGENT_ATTENTION:
+                agentAttention(app, target: target, v: action.action.agent_attention)
+
             case GHOSTTY_ACTION_PRESENT_TERMINAL:
                 return presentTerminal(app, target: target)
 
@@ -1424,9 +1427,17 @@ extension Ghostty {
             case GHOSTTY_TARGET_SURFACE:
                 guard let surface = target.target.surface else { return }
                 guard let surfaceView = self.surfaceView(from: surface) else { return }
-
-                // Determine if we even care about command finish notifications
                 guard let config = (NSApplication.shared.delegate as? AppDelegate)?.ghostty.config else { return }
+
+                let duration = Duration.nanoseconds(v.duration)
+                guard Duration.nanoseconds(v.duration) >= config.notifyOnCommandFinishAfter else { return }
+
+                NotificationCenter.default.post(
+                    name: .ghosttySurfaceCommandFinished,
+                    object: surfaceView,
+                    userInfo: [Foundation.Notification.Name.GhosttySurfaceCommandFinishedKey: Ghostty.Action.CommandFinished(c: v)]
+                )
+
                 switch config.notifyOnCommandFinish {
                 case .never:
                     return
@@ -1437,10 +1448,6 @@ extension Ghostty {
                 case .always:
                     break
                 }
-
-                // Determine if the command was slow enough
-                let duration = Duration.nanoseconds(v.duration)
-                guard Duration.nanoseconds(v.duration) >= config.notifyOnCommandFinishAfter else { return }
 
                 let actions = config.notifyOnCommandFinishAction
 
@@ -1482,6 +1489,43 @@ extension Ghostty {
                         requireFocus: false
                     )
                 }
+
+            default:
+                assertionFailure()
+            }
+        }
+
+        private static func agentAttention(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            v: ghostty_action_agent_attention_s
+        ) {
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                Ghostty.logger.warning("agent attention does nothing with an app target")
+                return
+
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return }
+                guard let surfaceView = self.surfaceView(from: surface) else { return }
+                guard let attention = Ghostty.Action.AgentAttention(c: v) else { return }
+
+                switch attention.operation {
+                case .set:
+                    surfaceView.agentAttentionState = attention.kind
+                case .emit:
+                    break
+                case .clear:
+                    if surfaceView.agentAttentionState == attention.kind {
+                        surfaceView.agentAttentionState = nil
+                    }
+                }
+
+                NotificationCenter.default.post(
+                    name: .ghosttySurfaceAttentionDidChange,
+                    object: surfaceView,
+                    userInfo: [Foundation.Notification.Name.GhosttySurfaceAttentionKey: attention]
+                )
 
             default:
                 assertionFailure()

@@ -2,12 +2,28 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum WorkspaceSidebarBadgeTone: Equatable {
+    case accent
+    case warning
+    case success
+}
+
+enum WorkspaceSidebarTransientBadge: Equatable {
+    case pill(label: String, tone: WorkspaceSidebarBadgeTone)
+    case symbol(systemName: String, tone: WorkspaceSidebarBadgeTone)
+}
+
 struct WorkspaceSidebarRow: Identifiable, Equatable {
     let id: String
     let title: String
     let subtitle: String?
     let shortcutHint: String?
-    let remoteSessionLabel: String?
+    let lastActivityAt: Date
+    let activityTimestamp: String?
+    let remoteSessionKind: WorkspaceRemoteSessionKind?
+    let agentAttentionLabel: String?
+    let transientAttentionBadge: WorkspaceSidebarTransientBadge?
+    let unseenAttentionCount: Int
     let hasRunningCommand: Bool
     let isSelected: Bool
     let isInactive: Bool
@@ -24,6 +40,10 @@ struct WorkspaceSidebarTheme: Equatable {
     let inactiveSubtitle: Color
     let badgeBackground: Color
     let badgeForeground: Color
+    let warningBadgeBackground: Color
+    let warningBadgeForeground: Color
+    let successBadgeBackground: Color
+    let successBadgeForeground: Color
     let colorScheme: ColorScheme
 
     static let `default` = Self(
@@ -37,8 +57,33 @@ struct WorkspaceSidebarTheme: Equatable {
         inactiveSubtitle: .secondary.opacity(0.9),
         badgeBackground: Color.accentColor.opacity(0.16),
         badgeForeground: Color.accentColor,
+        warningBadgeBackground: Color(nsColor: .systemOrange).opacity(0.16),
+        warningBadgeForeground: Color(nsColor: .systemOrange),
+        successBadgeBackground: Color(nsColor: .systemGreen).opacity(0.16),
+        successBadgeForeground: Color(nsColor: .systemGreen),
         colorScheme: .dark
     )
+}
+
+private enum WorkspaceSidebarProviderIcon {
+    static func image(for kind: WorkspaceRemoteSessionKind) -> NSImage? {
+        let svg: String
+        switch kind {
+        case .claude:
+            svg = """
+                <svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Claude</title><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z" fill="#D97757" fill-rule="nonzero"></path></svg>
+                """
+        case .codex:
+            svg = """
+                <svg height="1em" style="flex:none;line-height:1" viewBox="0 0 24 24" width="1em" xmlns="http://www.w3.org/2000/svg"><title>Codex</title><path d="M19.503 0H4.496A4.496 4.496 0 000 4.496v15.007A4.496 4.496 0 004.496 24h15.007A4.496 4.496 0 0024 19.503V4.496A4.496 4.496 0 0019.503 0z" fill="#fff"></path><path d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388zm3.482 10.565a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z" fill="url(#lobe-icons-codex-fill)"></path><defs><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-codex-fill" x1="12" x2="12" y1="3" y2="21"><stop stop-color="#B1A7FF"></stop><stop offset=".5" stop-color="#7A9DFF"></stop><stop offset="1" stop-color="#3941FF"></stop></linearGradient></defs></svg>
+                """
+        default:
+            return nil
+        }
+
+        guard let image = NSImage(data: Data(svg.utf8)) else { return nil }
+        return image
+    }
 }
 
 @MainActor
@@ -245,7 +290,10 @@ private enum WorkspaceSidebarLayout {
 
         let rowsHeight = CGFloat(rowCount) * estimatedRowHeight
         let spacingHeight = CGFloat(max(0, rowCount - 1)) * rowSpacing
-        return inactiveTopPadding + inactiveBottomPadding + rowsHeight + spacingHeight
+        return inactiveTopPadding +
+            inactiveBottomPadding +
+            rowsHeight +
+            spacingHeight
     }
 }
 
@@ -254,7 +302,9 @@ struct WorkspaceSidebarView: View {
     @State private var activeRowFrames: [String: CGRect] = [:]
 
     private var inactiveRows: [WorkspaceSidebarRow] {
-        viewModel.rows.filter(\.isInactive)
+        viewModel.rows
+            .filter(\.isInactive)
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
 
     private func inactiveRowsContent(sidebarWidth: CGFloat) -> some View {
@@ -263,8 +313,7 @@ struct WorkspaceSidebarView: View {
                 WorkspaceSidebarRowView(
                     row: row,
                     theme: viewModel.theme,
-                    sidebarWidth: sidebarWidth,
-                    showsSubtitle: false
+                    sidebarWidth: sidebarWidth
                 )
                 .onTapGesture {
                     viewModel.performSelect(row.id)
@@ -465,24 +514,38 @@ private struct WorkspaceSidebarRowView: View {
                     .frame(width: 8, height: 8)
                     .fixedSize()
                     .scaleEffect(pulseScale)
-                    .onAppear {
-                        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                            pulseScale = 1.22
-                        }
-                    }
             }
 
-            if let remoteSessionLabel = row.remoteSessionLabel, !remoteSessionLabel.isEmpty {
-                Text(remoteSessionLabel)
-                    .font(.system(size: 9, weight: .semibold))
-                    .kerning(0.2)
-                    .foregroundStyle(badgeForegroundColor)
+            if let remoteSessionKind = row.remoteSessionKind {
+                remoteSessionBadge(remoteSessionKind)
+            }
+
+            if let agentAttentionLabel = row.agentAttentionLabel, !agentAttentionLabel.isEmpty {
+                badgePill(agentAttentionLabel, tone: .warning)
+            }
+
+            if let transientAttentionBadge = row.transientAttentionBadge {
+                transientBadgeView(transientAttentionBadge)
+            }
+
+            if row.unseenAttentionCount > 0 {
+                Text("\(row.unseenAttentionCount)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(toneForegroundColor(.warning))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(
                         Capsule()
-                            .fill(badgeBackgroundColor)
+                            .fill(toneBackgroundColor(.warning))
                     )
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
+            if let activityTimestamp = row.activityTimestamp, !activityTimestamp.isEmpty {
+                Text(activityTimestamp)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(activityTimestampColor)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -517,15 +580,16 @@ private struct WorkspaceSidebarRowView: View {
         .scaleEffect(isDragged ? 0.985 : (isHovered ? 1.012 : 1.0))
         .opacity(opacity)
         .animation(.easeInOut(duration: 0.18), value: row.isSelected)
+        .onAppear {
+            updatePulseAnimation(isRunning: row.hasRunningCommand)
+        }
         .onHover { hovering in
             withAnimation(.easeInOut(duration: 0.12)) {
                 isHovered = hovering
             }
         }
         .onChange(of: row.hasRunningCommand) { running in
-            if !running {
-                pulseScale = 1.0
-            }
+            updatePulseAnimation(isRunning: running)
         }
     }
 
@@ -570,15 +634,93 @@ private struct WorkspaceSidebarRowView: View {
         row.isInactive ? theme.badgeForeground.opacity(0.78) : theme.badgeForeground
     }
 
+    private func badgePill(_ label: String, tone: WorkspaceSidebarBadgeTone) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .semibold))
+            .kerning(0.2)
+            .foregroundStyle(toneForegroundColor(tone))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(toneBackgroundColor(tone))
+            )
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    @ViewBuilder
+    private func remoteSessionBadge(_ kind: WorkspaceRemoteSessionKind) -> some View {
+        if kind.usesSidebarIcon, let image = WorkspaceSidebarProviderIcon.image(for: kind) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 15, height: 15)
+                .fixedSize()
+                .accessibilityLabel(kind.badgeLabel)
+        } else {
+            badgePill(kind.badgeLabel, tone: .accent)
+        }
+    }
+
+    @ViewBuilder
+    private func transientBadgeView(_ badge: WorkspaceSidebarTransientBadge) -> some View {
+        switch badge {
+        case .pill(let label, let tone):
+            badgePill(label, tone: tone)
+        case .symbol(let systemName, let tone):
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(toneForegroundColor(tone))
+                .frame(width: 16, height: 16)
+        }
+    }
+
+    private func toneBackgroundColor(_ tone: WorkspaceSidebarBadgeTone) -> Color {
+        let color: Color = switch tone {
+        case .accent:
+            badgeBackgroundColor
+        case .warning:
+            row.isInactive ? theme.warningBadgeBackground.opacity(0.72) : theme.warningBadgeBackground
+        case .success:
+            row.isInactive ? theme.successBadgeBackground.opacity(0.72) : theme.successBadgeBackground
+        }
+        return color
+    }
+
+    private func toneForegroundColor(_ tone: WorkspaceSidebarBadgeTone) -> Color {
+        let color: Color = switch tone {
+        case .accent:
+            badgeForegroundColor
+        case .warning:
+            row.isInactive ? theme.warningBadgeForeground.opacity(0.78) : theme.warningBadgeForeground
+        case .success:
+            row.isInactive ? theme.successBadgeForeground.opacity(0.78) : theme.successBadgeForeground
+        }
+        return color
+    }
+
+    private var activityTimestampColor: Color {
+        if row.isSelected {
+            return theme.title.opacity(0.72)
+        }
+
+        return row.isInactive ? theme.inactiveSubtitle : theme.subtitle.opacity(0.72)
+    }
+
     private var showsRunningIndicator: Bool {
-        row.hasRunningCommand && (row.remoteSessionLabel == nil || row.remoteSessionLabel?.isEmpty == true)
+        row.hasRunningCommand && (row.remoteSessionKind?.usesSidebarIcon != true)
     }
 
     private var canShowShortcutHint: Bool {
         isHovered &&
             !isDragged &&
             !showsRunningIndicator &&
-            (row.remoteSessionLabel == nil || row.remoteSessionLabel?.isEmpty == true)
+            (row.agentAttentionLabel == nil || row.agentAttentionLabel?.isEmpty == true) &&
+            row.transientAttentionBadge == nil &&
+            row.unseenAttentionCount == 0 &&
+            (row.activityTimestamp == nil || row.activityTimestamp?.isEmpty == true) &&
+            row.remoteSessionKind == nil
     }
 
     private var displaySubtitle: String? {
@@ -592,6 +734,18 @@ private struct WorkspaceSidebarRowView: View {
     private var opacity: Double {
         if row.isInactive { return 0.62 }
         return isDragged ? 0.82 : 1.0
+    }
+
+    private func updatePulseAnimation(isRunning: Bool) {
+        guard isRunning else {
+            pulseScale = 1.0
+            return
+        }
+
+        pulseScale = 1.0
+        withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
+            pulseScale = 1.22
+        }
     }
 }
 
