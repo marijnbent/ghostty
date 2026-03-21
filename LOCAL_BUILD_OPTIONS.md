@@ -33,6 +33,36 @@ Output location:
 macos/build/<configuration>/Ghostty.app
 ```
 
+## Local signing for stable macOS permissions
+
+If macOS keeps forgetting app permissions after you reinstall Ghostty,
+build the app with automatic development signing instead of ad hoc
+"Sign to Run Locally" signing.
+
+One-time setup:
+
+1. Install Xcode and sign in with your Apple ID.
+2. Open `macos/Ghostty.xcodeproj` once.
+3. Select the `Ghostty` target and choose your Personal Team or Apple Development team in Signing.
+4. Note the team ID if you want to keep building from the command line.
+
+CLI builds can then pass the team directly:
+
+```bash
+macos/build.nu --scheme Ghostty --configuration ReleaseLocal --development-team YOURTEAMID --action build
+```
+
+Or set an environment variable for repeat use:
+
+```bash
+export GHOSTTY_DEVELOPMENT_TEAM=YOURTEAMID
+macos/build.nu --scheme Ghostty --configuration ReleaseLocal --action build
+```
+
+This keeps `ReleaseLocal` on the normal `com.mitchellh.ghostty` bundle ID
+while letting Xcode use your development signing identity, which is the
+best shot at keeping macOS privacy permissions stable across reinstalls.
+
 ## Best day-to-day options
 
 ### Debug build
@@ -56,6 +86,7 @@ macos/build.nu --scheme Ghostty --configuration ReleaseLocal --action build
 
 - app path: `macos/build/ReleaseLocal/Ghostty.app`
 - bundle id: `com.mitchellh.ghostty`
+- for stable macOS permissions, prefer `--development-team YOURTEAMID`
 
 ## Install helpers
 

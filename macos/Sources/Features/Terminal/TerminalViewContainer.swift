@@ -67,7 +67,7 @@ class TerminalViewContainer: NSView {
 
         sidebarDivider.translatesAutoresizingMaskIntoConstraints = false
         sidebarDivider.boxType = .custom
-        sidebarDivider.borderType = .noBorder
+        sidebarDivider.isTransparent = true
         sidebarDivider.fillColor = .separatorColor
         sidebarDivider.isHidden = true
 
