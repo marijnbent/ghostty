@@ -93,16 +93,10 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
             // Use the `Blueprint` icon to distinguish Debug from Release builds.
             appIcon = pluginBundle.image(forResource: "BlueprintImage")!
             #else
-            // Get the composed icon from the app bundle.
-            if let appBundlePath,
-                let iconRep = NSWorkspace.shared.icon(forFile: appBundlePath)
-                .bestRepresentation(
-                    for: CGRect(origin: .zero, size: dockTile.size),
-                    context: nil,
-                    hints: nil
-            ) {
-                appIcon = NSImage(size: dockTile.size)
-                appIcon.addRepresentation(iconRep)
+            // Load the app bundle icon directly so ReleaseLocal doesn't inherit
+            // a stale icon from NSWorkspace/Finder caches after swapping builds.
+            if let appIconFromBundle = defaultAppBundleIcon(size: dockTile.size) {
+                appIcon = appIconFromBundle
             } else {
                 // If something unexpected happens on macOS 26,
                 // fall back to a bundled icon.
@@ -122,6 +116,26 @@ class DockTilePlugin: NSObject, NSDockTilePlugIn {
             NSWorkspace.shared.noteFileSystemChanged(appBundlePath)
         }
         dockTile.setIcon(appIcon)
+    }
+
+    private func defaultAppBundleIcon(size: CGSize) -> NSImage? {
+        guard let ghosttyAppURL, let appBundle = Bundle(url: ghosttyAppURL) else {
+            return nil
+        }
+
+        if let iconURL = appBundle.url(forResource: "Ghostty", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL),
+           let iconRep = icon.bestRepresentation(
+               for: CGRect(origin: .zero, size: size),
+               context: nil,
+               hints: nil
+           ) {
+            let appIcon = NSImage(size: size)
+            appIcon.addRepresentation(iconRep)
+            return appIcon
+        }
+
+        return nil
     }
 }
 
