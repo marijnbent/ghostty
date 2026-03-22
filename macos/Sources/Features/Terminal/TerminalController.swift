@@ -28,11 +28,16 @@ enum WorkspaceAutomaticTitleTracking {
 enum WorkspaceTitlePresentation {
     static func displayTitle(
         titleOverride: String?,
+        shellTitleOverride: String? = nil,
         computedTitle: String,
         location: String?
     ) -> String {
         if let titleOverride, !titleOverride.isEmpty {
             return titleOverride
+        }
+
+        if let shellTitleOverride, !shellTitleOverride.isEmpty {
+            return shellTitleOverride
         }
 
         let trimmedTitle = computedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -230,6 +235,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         var tree: SplitTree<Ghostty.SurfaceView>
         var focusedSurface = Weak<Ghostty.SurfaceView>()
         var titleOverride: String?
+        var shellTitleOverride: String?
         var computedTitle: String = "👻"
         var location: String?
         var remoteSessions: [Ghostty.SurfaceView.ID: WorkspaceRemoteSession] = [:]
@@ -365,6 +371,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         self.workspaces = [.init(id: initialWorkspaceID, tree: self.surfaceTree, focusedSurface: self.focusedSurface)]
         self.workspaces[0].computedTitle = self.lastComputedTitle
         self.workspaces[0].titleOverride = self.titleOverride
+        self.workspaces[0].shellTitleOverride = self.shellTitleOverride
         self.workspaces[0].location = self.workspaceLocation
         self.workspaces[0].remoteSessions = self.workspaceRemoteSessions
         self.workspaces[0].lastActivityAt = self.workspaceLastActivityAt
@@ -472,6 +479,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     override func shouldTrackFocusedSurfaceTitle() -> Bool {
         WorkspaceAutomaticTitleTracking.shouldTrackComputedTitle(leafCount: surfaceTree.count)
+    }
+
+    override func syncWorkspaceSidebarStateSnapshot() {
+        guard !isApplyingWorkspaceState else { return }
+        syncActiveWorkspaceFromController()
     }
 
     override func replaceSurfaceTree(
@@ -885,6 +897,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     private func workspaceDisplayTitle(for workspace: WorkspaceState) -> String {
         WorkspaceTitlePresentation.displayTitle(
             titleOverride: workspace.titleOverride,
+            shellTitleOverride: workspace.shellTitleOverride,
             computedTitle: workspace.computedTitle,
             location: workspace.location
         )
@@ -1130,6 +1143,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
         let controller = Self.newWindow(ghostty, tree: workspace.tree, confirmUndo: false)
         controller.titleOverride = workspace.titleOverride
+        controller.shellTitleOverride = workspace.shellTitleOverride
         DispatchQueue.main.async {
             controller.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -1261,6 +1275,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         workspace.tree = surfaceTree
         workspace.focusedSurface.value = focusedSurface
         workspace.titleOverride = titleOverride
+        workspace.shellTitleOverride = shellTitleOverride
         workspace.computedTitle = lastComputedTitle
         workspace.location = workspaceLocation
         workspace.remoteSessions = workspaceRemoteSessions
@@ -1285,6 +1300,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             surfaceTree.first
         }
         titleOverride = workspace.titleOverride
+        shellTitleOverride = workspace.shellTitleOverride
         setWorkspaceComputedTitle(workspace.computedTitle, notifySidebar: false)
         setWorkspaceDisplayLocation(workspace.location, notifySidebar: false)
         setWorkspaceRemoteSessions(workspace.remoteSessions, notifySidebar: false)

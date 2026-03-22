@@ -1684,13 +1684,13 @@ extension Ghostty {
 
             case GHOSTTY_TARGET_SURFACE:
                 guard let title = String(cString: v.title!, encoding: .utf8) else { return false }
-                let titleOverride = title.isEmpty ? nil : title
+                let shellTitleOverride = title.isEmpty ? nil : title
                 guard let surface = target.target.surface else { return false }
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
                 guard let window = surfaceView.window,
                       let controller = window.windowController as? BaseTerminalController
                 else { return false }
-                controller.titleOverride = titleOverride
+                controller.shellTitleOverride = shellTitleOverride
                 return true
 
             default:

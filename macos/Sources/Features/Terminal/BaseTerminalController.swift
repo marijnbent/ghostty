@@ -328,10 +328,21 @@ class BaseTerminalController: NSWindowController,
     /// Cancellable for aggregating bell state across all surfaces in this controller.
     private var bellStateCancellable: AnyCancellable?
 
-    /// An override title for the tab/window set by the user via prompt_tab_title.
-    /// When set, this takes precedence over the computed title from the terminal.
+    /// A manual title override set by the user via workspace/tab rename UI.
+    /// When set, this takes precedence over shell-driven and computed titles.
     var titleOverride: String? {
         didSet {
+            syncWorkspaceSidebarStateSnapshot()
+            applyTitleToWindow()
+            notifyWorkspaceSidebarDidChange()
+        }
+    }
+
+    /// A workspace-level title override set by terminal actions.
+    /// This is lower priority than the user rename above.
+    var shellTitleOverride: String? {
+        didSet {
+            syncWorkspaceSidebarStateSnapshot()
             applyTitleToWindow()
             notifyWorkspaceSidebarDidChange()
         }
@@ -352,6 +363,7 @@ class BaseTerminalController: NSWindowController,
     var displayTitle: String {
         WorkspaceTitlePresentation.displayTitle(
             titleOverride: titleOverride,
+            shellTitleOverride: shellTitleOverride,
             computedTitle: lastComputedTitle,
             location: workspaceLocation
         )
@@ -1168,6 +1180,7 @@ class BaseTerminalController: NSWindowController,
 
     private func titleDidChange(to: String) {
         lastComputedTitle = to
+        syncWorkspaceSidebarStateSnapshot()
         applyTitleToWindow()
         notifyWorkspaceSidebarDidChange()
     }
@@ -1178,6 +1191,13 @@ class BaseTerminalController: NSWindowController,
         if let titleOverride {
             window.title = computeTitle(
                 title: titleOverride,
+                bell: focusedSurface?.bell ?? false)
+            return
+        }
+
+        if let shellTitleOverride {
+            window.title = computeTitle(
+                title: shellTitleOverride,
                 bell: focusedSurface?.bell ?? false)
             return
         }
@@ -1209,11 +1229,13 @@ class BaseTerminalController: NSWindowController,
 
     private func workspaceLocationDidChange(_ pwd: String?) {
         workspaceLocation = pwd
+        syncWorkspaceSidebarStateSnapshot()
         notifyWorkspaceSidebarDidChange()
     }
 
     func setWorkspaceComputedTitle(_ title: String, notifySidebar: Bool = true) {
         lastComputedTitle = title
+        syncWorkspaceSidebarStateSnapshot()
         applyTitleToWindow()
         if notifySidebar {
             notifyWorkspaceSidebarDidChange()
@@ -1222,6 +1244,7 @@ class BaseTerminalController: NSWindowController,
 
     func setWorkspaceDisplayLocation(_ pwd: String?, notifySidebar: Bool = true) {
         workspaceLocation = pwd
+        syncWorkspaceSidebarStateSnapshot()
         if notifySidebar {
             notifyWorkspaceSidebarDidChange()
         }
@@ -1233,6 +1256,7 @@ class BaseTerminalController: NSWindowController,
     ) {
         guard workspaceRemoteSessions != remoteSessions else { return }
         workspaceRemoteSessions = remoteSessions
+        syncWorkspaceSidebarStateSnapshot()
         if notifySidebar {
             notifyWorkspaceSidebarDidChange()
         }
@@ -1337,6 +1361,7 @@ class BaseTerminalController: NSWindowController,
     ) {
         workspaceIsInactive = inactive
         workspaceInactiveAt = inactiveAt
+        syncWorkspaceSidebarStateSnapshot()
         if notifySidebar {
             notifyWorkspaceSidebarDidChange()
         }
@@ -1344,6 +1369,7 @@ class BaseTerminalController: NSWindowController,
 
     func setWorkspaceLastActivity(_ date: Date, notifySidebar: Bool = false) {
         workspaceLastActivityAt = date
+        syncWorkspaceSidebarStateSnapshot()
         if notifySidebar {
             notifyWorkspaceSidebarDidChange()
         }
@@ -1378,6 +1404,8 @@ class BaseTerminalController: NSWindowController,
         guard let session = WorkspaceRemoteSession.detect(in: title) else { return }
         setWorkspaceRemoteSession(session, for: surface, notifySidebar: notifySidebar)
     }
+
+    func syncWorkspaceSidebarStateSnapshot() {}
 
     private func notifyWorkspaceSidebarDidChange() {
         (self as? TerminalController)?.refreshWorkspaceSidebarGroup()

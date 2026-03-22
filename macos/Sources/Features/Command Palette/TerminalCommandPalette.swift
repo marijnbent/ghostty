@@ -147,6 +147,8 @@ struct TerminalCommandPaletteView: View {
                 let displayTitle: String
                 if let override = controller.titleOverride, !override.isEmpty {
                     displayTitle = override
+                } else if let override = controller.shellTitleOverride, !override.isEmpty {
+                    displayTitle = override
                 } else if !terminalTitle.isEmpty {
                     displayTitle = terminalTitle
                 } else {
