@@ -66,7 +66,22 @@ struct WorkspaceSidebarTheme: Equatable {
 }
 
 private enum WorkspaceSidebarProviderIcon {
+    private static let iconSize = NSSize(width: 24, height: 24)
+    private static let cachedImages: [WorkspaceRemoteSessionKind: NSImage] = {
+        var images: [WorkspaceRemoteSessionKind: NSImage] = [:]
+        for kind in [WorkspaceRemoteSessionKind.claude, .codex] {
+            if let image = makeImage(for: kind) {
+                images[kind] = image
+            }
+        }
+        return images
+    }()
+
     static func image(for kind: WorkspaceRemoteSessionKind) -> NSImage? {
+        cachedImages[kind]
+    }
+
+    private static func makeImage(for kind: WorkspaceRemoteSessionKind) -> NSImage? {
         let svg: String
         switch kind {
         case .claude:
@@ -82,6 +97,8 @@ private enum WorkspaceSidebarProviderIcon {
         }
 
         guard let image = NSImage(data: Data(svg.utf8)) else { return nil }
+        image.size = iconSize
+        image.isTemplate = false
         return image
     }
 }
