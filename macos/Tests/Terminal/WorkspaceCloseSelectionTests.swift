@@ -100,6 +100,27 @@ struct WorkspaceCloseSelectionTests {
         #expect(replacement == nil)
     }
 
+    @Test func lastActiveWorkspaceCannotBecomeInactive() {
+        let workspaces: [WorkspaceCloseSelectionEntry] = [
+            .init(id: "a", isInactive: false),
+            .init(id: "b", isInactive: true),
+            .init(id: "c", isInactive: true),
+        ]
+
+        #expect(!WorkspaceInactivityPolicy.canDeactivate(workspaceID: "a", in: workspaces))
+    }
+
+    @Test func activeWorkspaceCanBecomeInactiveWhenAnotherActiveWorkspaceExists() {
+        let workspaces: [WorkspaceCloseSelectionEntry] = [
+            .init(id: "a", isInactive: false),
+            .init(id: "b", isInactive: false),
+            .init(id: "c", isInactive: true),
+        ]
+
+        #expect(WorkspaceInactivityPolicy.canDeactivate(workspaceID: "a", in: workspaces))
+        #expect(WorkspaceInactivityPolicy.canDeactivate(workspaceID: "b", in: workspaces))
+    }
+
     @Test func closingInactiveWorkspaceStillFallsBackToRemainingInactiveWorkspace() {
         let workspaces: [WorkspaceCloseSelectionEntry] = [
             .init(id: "a", isInactive: true),

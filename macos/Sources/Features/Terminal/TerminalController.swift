@@ -227,6 +227,17 @@ enum WorkspaceCloseSelection {
     }
 }
 
+enum WorkspaceInactivityPolicy {
+    static func canDeactivate(
+        workspaceID: String,
+        in workspaces: [WorkspaceCloseSelectionEntry]
+    ) -> Bool {
+        let activeWorkspaces = workspaces.filter { !$0.isInactive }
+        guard activeWorkspaces.count == 1 else { return true }
+        return activeWorkspaces[0].id != workspaceID
+    }
+}
+
 /// A classic, tabbed terminal experience.
 class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Controller {
     @MainActor
@@ -1172,6 +1183,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     private func makeWorkspaceInactive(id: String, referenceDate: Date) {
         guard let workspace = workspaces.first(where: { $0.id == id }) else { return }
         guard !workspace.isInactive else { return }
+        guard WorkspaceInactivityPolicy.canDeactivate(
+            workspaceID: id,
+            in: workspaceCloseSelectionEntries()
+        ) else { return }
 
         let nextActiveWorkspaceID: String? = if id == activeWorkspaceID {
             workspaces.first(where: { $0.id != id && !$0.isInactive })?.id

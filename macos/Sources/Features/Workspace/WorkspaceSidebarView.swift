@@ -545,7 +545,7 @@ private struct WorkspaceSidebarRowView: View {
                 transientBadgeView(transientAttentionBadge)
             }
 
-            if row.unseenAttentionCount > 0 {
+            if shouldShowUnseenAttentionCount {
                 Text("\(row.unseenAttentionCount)")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .foregroundStyle(toneForegroundColor(.warning))
@@ -738,6 +738,10 @@ private struct WorkspaceSidebarRowView: View {
             row.unseenAttentionCount == 0 &&
             (row.activityTimestamp == nil || row.activityTimestamp?.isEmpty == true) &&
             row.remoteSessionKind == nil
+    }
+
+    private var shouldShowUnseenAttentionCount: Bool {
+        row.unseenAttentionCount > 0 && row.transientAttentionBadge == nil
     }
 
     private var displaySubtitle: String? {
