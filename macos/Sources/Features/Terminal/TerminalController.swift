@@ -2097,8 +2097,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     override func windowDidBecomeKey(_ notification: Notification) {
         super.windowDidBecomeKey(notification)
+        markWorkspaceAttentionSeen(id: activeWorkspaceID, refreshSidebar: false)
         self.relabelTabs()
         self.fixTabBar()
+        refreshWorkspaceSidebar()
         terminalViewContainer?.updateGlassTintOverlay(isKeyWindow: true)
     }
 
