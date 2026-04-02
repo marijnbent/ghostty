@@ -19,6 +19,7 @@ const apprt = @import("../apprt.zig");
 const internal_os = @import("../os/main.zig");
 const windows = internal_os.windows;
 const configpkg = @import("../config.zig");
+const ProcessInfo = @import("../pty.zig").ProcessInfo;
 
 const log = std.log.scoped(.io_exec);
 
@@ -576,9 +577,8 @@ pub fn clearScreen(self: *Termio, td: *ThreadData, history: bool) !void {
         // If we're not at a prompt, we just delete above the cursor.
         if (!self.terminal.cursorIsAtPrompt()) {
             if (self.terminal.screens.active.cursor.y > 0) {
-                self.terminal.screens.active.eraseRows(
-                    .{ .active = .{ .y = 0 } },
-                    .{ .active = .{ .y = self.terminal.screens.active.cursor.y - 1 } },
+                self.terminal.screens.active.eraseActive(
+                    self.terminal.screens.active.cursor.y - 1,
                 );
             }
 
@@ -764,3 +764,10 @@ pub const ThreadData = struct {
         self.* = undefined;
     }
 };
+
+/// Get information about the process(es) attached to the backend. Returns
+/// `null` if there was an error getting the information or the information is
+/// not available on a particular platform.
+pub fn getProcessInfo(self: *Termio, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
+    return self.backend.getProcessInfo(info);
+}
