@@ -2,6 +2,28 @@
 
 A file for [guiding coding agents](https://agents.md/).
 
+## Project Context
+
+- Ghostty aims to be a fast, native, feature-rich terminal emulator.
+- Prefer changes that preserve standards compliance and compatibility with
+  existing shells and terminal software.
+- Treat Ghostty as a drop-in replacement terminal unless the user asks for
+  experimental or fork-specific behavior.
+
+## Read First
+
+- [README.md](README.md) for the top-level project overview and links to
+  upstream docs.
+- [HACKING.md](HACKING.md) for technical development details.
+- [CONTRIBUTING.md](CONTRIBUTING.md) for upstream contribution expectations.
+- [LOCAL_BUILD_OPTIONS.md](LOCAL_BUILD_OPTIONS.md) for this fork's preferred
+  build, run, and install commands.
+- [LOCAL_FORK_WORKFLOW.md](LOCAL_FORK_WORKFLOW.md) for local branch and
+  upstream sync workflow.
+- [AI_POLICY.md](AI_POLICY.md) for repo-specific AI usage expectations.
+- [PACKAGING.md](PACKAGING.md) for packaging and distribution notes when
+  release or packaging work is involved.
+
 ## Commands
 
 - **Build:** `zig build`
@@ -16,10 +38,18 @@ A file for [guiding coding agents](https://agents.md/).
 - **Formatting (Swift)**: `swiftlint lint --strict --fix`
 - **Formatting (other)**: `prettier -w .`
 
-## libghostty-vt
+## Default Build Behavior
 
-- Build: `zig build -Demit-lib-vt`
-- Build WASM: `zig build -Demit-lib-vt -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall`
+- When the user asks to "build" without extra detail, use
+  `LOCAL_BUILD_OPTIONS.md`.
+- On macOS, default to building:
+  `macos/build.nu --scheme Ghostty --configuration ReleaseLocal --action build`
+- After a successful default build, install it to:
+  `/Applications/Ghostty.app`
+  using:
+  `bash macos/install_local_app.sh ReleaseLocal "/Applications/Ghostty.app"`
+- Only use a different build path when the user explicitly asks for Debug,
+  a Zig-only build, tests, or no install.
 
 ## Directory Structure
 

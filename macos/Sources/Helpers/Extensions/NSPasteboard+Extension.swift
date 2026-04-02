@@ -27,10 +27,42 @@ extension NSPasteboard.PasteboardType {
 }
 
 extension NSPasteboard {
+    enum GhosttyReadableContent: Equatable {
+        case string(String)
+        case imageOnly
+        case unavailable
+    }
+
     /// The pasteboard to used for Ghostty selection.
     static var ghosttySelection: NSPasteboard = {
         NSPasteboard(name: .init("com.mitchellh.ghostty.selection"))
     }()
+
+    /// Returns the contents of the pasteboard following Ghostty's paste semantics.
+    ///
+    /// This distinguishes image-only clipboard contents from truly unavailable
+    /// clipboard contents so key handling can choose whether to fall through to
+    /// the terminal application.
+    func ghosttyReadableContent() -> GhosttyReadableContent {
+        if let urls = readObjects(forClasses: [NSURL.self]) as? [URL],
+           urls.count > 0 {
+            return .string(
+                urls
+                    .map { $0.isFileURL ? Ghostty.Shell.escape($0.path) : $0.absoluteString }
+                    .joined(separator: " ")
+            )
+        }
+
+        if let string = self.string(forType: .string) {
+            return .string(string)
+        }
+
+        if hasImageContents {
+            return .imageOnly
+        }
+
+        return .unavailable
+    }
 
     /// Gets the contents of the pasteboard as a string following a specific set of semantics.
     /// Does these things in order:
@@ -38,14 +70,8 @@ extension NSPasteboard {
     /// - Tries to get any string from the pasteboard.
     /// If all of the above fail, returns None.
     func getOpinionatedStringContents() -> String? {
-        if let urls = readObjects(forClasses: [NSURL.self]) as? [URL],
-           urls.count > 0 {
-            return urls
-                .map { $0.isFileURL ? Ghostty.Shell.escape($0.path) : $0.absoluteString }
-                .joined(separator: " ")
-        }
-
-        return self.string(forType: .string)
+        guard case let .string(string) = ghosttyReadableContent() else { return nil }
+        return string
     }
 
     /// The pasteboard for the Ghostty enum type.
@@ -59,6 +85,14 @@ extension NSPasteboard {
 
         default:
             return nil
+        }
+    }
+
+    var hasImageContents: Bool {
+        guard let types = self.types else { return false }
+        return types.contains { type in
+            guard let utType = UTType(type.rawValue) else { return false }
+            return utType.conforms(to: .image)
         }
     }
 }

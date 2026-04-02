@@ -662,14 +662,6 @@ extension Ghostty {
         }
 
         private func localEventLeftMouseDown(_ event: NSEvent) -> NSEvent? {
-            let isCommandPaletteVisible = (event.window?.windowController as? BaseTerminalController)?
-                .commandPaletteIsShowing == true
-            guard !isCommandPaletteVisible else {
-                // We don't want to process events that
-                // are supposed to be handled by CommandPaletteView
-                return event
-            }
-
             // We only want to process events that are on this window.
             guard let window,
                   event.window != nil,
@@ -677,9 +669,7 @@ extension Ghostty {
 
             // The clicked location in this window should be this view.
             let location = convert(event.locationInWindow, from: nil)
-            // We should use window to perform hitTest here,
-            // because there could be some other overlays on top, like search bar
-            guard window.contentView?.hitTest(location) == self else { return event }
+            guard hitTest(location) == self else { return event }
 
             // We always assume that we're resetting our mouse suppression
             // unless we see the specific scenario below to set it.
@@ -1248,6 +1238,42 @@ extension Ghostty {
         /// timestamp so we have to protect against that. Fun!
         var lastPerformKeyEvent: TimeInterval?
 
+        private static let shortcutModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+
+        static func shouldPassthroughImagePasteKeyEquivalent(
+            eventKeyEquivalent: String?,
+            eventModifiers: NSEvent.ModifierFlags,
+            pasteKeyEquivalent: String,
+            pasteModifiers: NSEvent.ModifierFlags,
+            clipboardContent: NSPasteboard.GhosttyReadableContent
+        ) -> Bool {
+            guard case .imageOnly = clipboardContent else { return false }
+            guard let eventKeyEquivalent else { return false }
+
+            let normalizedEventKey = eventKeyEquivalent.lowercased()
+            let normalizedPasteKey = pasteKeyEquivalent.lowercased()
+            guard !normalizedEventKey.isEmpty, !normalizedPasteKey.isEmpty else { return false }
+
+            return normalizedEventKey == normalizedPasteKey &&
+                eventModifiers.intersection(shortcutModifiers) ==
+                pasteModifiers.intersection(shortcutModifiers)
+        }
+
+        private func shouldPassthroughImagePasteKeyEquivalent(with event: NSEvent) -> Bool {
+            guard let appDelegate = NSApp.delegate as? AppDelegate,
+                  appDelegate.pasteMenuShortcutMatches(event) else {
+                return false
+            }
+
+            return Self.shouldPassthroughImagePasteKeyEquivalent(
+                eventKeyEquivalent: event.charactersIgnoringModifiers,
+                eventModifiers: event.modifierFlags,
+                pasteKeyEquivalent: event.charactersIgnoringModifiers ?? "",
+                pasteModifiers: event.modifierFlags,
+                clipboardContent: NSPasteboard.general.ghosttyReadableContent()
+            )
+        }
+
         /// Special case handling for some control keys
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             // We only care about key down events. It might not even be possible
@@ -1295,6 +1321,11 @@ extension Ghostty {
 
             // If this is a binding then we want to perform it.
             if let bindingFlags {
+                if bindingFlags.contains(.performable) &&
+                    shouldPassthroughImagePasteKeyEquivalent(with: event) {
+                    return false
+                }
+
                 // Attempt to trigger a menu item for this key binding. We only do this if:
                 //   - We're not in a key sequence or table (those are separate bindings)
                 //   - The binding is NOT `all` (menu uses FirstResponder chain)

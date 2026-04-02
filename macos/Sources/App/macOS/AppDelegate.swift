@@ -154,7 +154,12 @@ class AppDelegate: NSObject,
     /// The custom app icon image that is currently in use.
     @Published private(set) var appIcon: NSImage?
 
-    @MainActor private lazy var menuShortcutManager = Ghostty.MenuShortcutManager()
+    /// Ghostty menu items indexed by their normalized shortcut. This avoids traversing
+    /// the entire menu tree on every key equivalent event.
+    ///
+    /// We store a weak reference so this cache can never be the owner of menu items.
+    /// If multiple items map to the same shortcut, the most recent one wins.
+    private var menuItemsByShortcut: [MenuShortcutKey: Weak<NSMenuItem>] = [:]
 
     /// Tracks the app-level "press quit twice" guard state for keyboard quit shortcuts.
     private var quitShortcutGuard = QuitShortcutGuard()
@@ -890,9 +895,7 @@ class AppDelegate: NSObject,
         }
 
         // Config could change keybindings, so update everything that depends on that
-        DispatchQueue.main.async {
-            self.syncMenuShortcuts(config)
-        }
+        syncMenuShortcuts(config)
         TerminalController.all.forEach { $0.relabelTabs() }
 
         // Update our badge since config can change what we show.
@@ -1252,10 +1255,11 @@ extension AppDelegate {
     }
 
     /// Sync all of our menu item keyboard shortcuts with the Ghostty configuration.
-    @MainActor private func syncMenuShortcuts(_ config: Ghostty.Config) {
+    private func syncMenuShortcuts(_ config: Ghostty.Config) {
         guard ghostty.readiness == .ready else { return }
 
-        menuShortcutManager.reset()
+        // Reset our shortcut index since we're about to rebuild all menu bindings.
+        menuItemsByShortcut.removeAll(keepingCapacity: true)
 
         syncMenuShortcut(config, action: "check_for_updates", menuItem: self.menuCheckForUpdates)
         syncMenuShortcut(config, action: "open_config", menuItem: self.menuOpenConfig)
@@ -1337,12 +1341,110 @@ extension AppDelegate {
         menuChangeTabTitle?.keyEquivalentModifierMask = [.command, .shift]
     }
 
-    @MainActor private func syncMenuShortcut(_ config: Ghostty.Config, action: String, menuItem: NSMenuItem?) {
-        menuShortcutManager.syncMenuShortcut(config, action: action, menuItem: menuItem)
+    /// Syncs a single menu shortcut for the given action. The action string is the same
+    /// action string used for the Ghostty configuration.
+    private func syncMenuShortcut(_ config: Ghostty.Config, action: String, menuItem: NSMenuItem?) {
+        guard let menu = menuItem else { return }
+
+        guard let shortcut = config.keyboardShortcut(for: action) else {
+            // No shortcut, clear the menu item
+            menu.keyEquivalent = ""
+            menu.keyEquivalentModifierMask = []
+            return
+        }
+
+        let keyEquivalent = shortcut.key.character.description
+        let modifierMask = NSEvent.ModifierFlags(swiftUIFlags: shortcut.modifiers)
+        menu.keyEquivalent = keyEquivalent
+        menu.keyEquivalentModifierMask = modifierMask
+
+        // Build a direct lookup for key-equivalent dispatch so we don't need to
+        // linearly walk the full menu hierarchy at event time.
+        guard let key = MenuShortcutKey(
+            keyEquivalent: keyEquivalent,
+            modifiers: modifierMask
+        ) else {
+            return
+        }
+
+        // Later registrations intentionally override earlier ones for the same key.
+        menuItemsByShortcut[key] = .init(menu)
     }
 
-    @MainActor func performGhosttyBindingMenuKeyEquivalent(with event: NSEvent) -> Bool {
-        menuShortcutManager.performGhosttyBindingMenuKeyEquivalent(with: event)
+    /// Attempts to perform a menu key equivalent only for menu items that represent
+    /// Ghostty keybind actions. This is important because it lets our surface dispatch
+    /// bindings through the menu so they flash but also lets our surface override macOS built-ins
+    /// like Cmd+H.
+    func performGhosttyBindingMenuKeyEquivalent(with event: NSEvent) -> Bool {
+        // Convert this event into the same normalized lookup key we use when
+        // syncing menu shortcuts from configuration.
+        guard let key = MenuShortcutKey(event: event) else {
+            return false
+        }
+
+        // If we don't have an entry for this key combo, no Ghostty-owned
+        // menu shortcut exists for this event.
+        guard let weakItem = menuItemsByShortcut[key] else {
+            return false
+        }
+
+        // Weak references can be nil if a menu item was deallocated after sync.
+        guard let item = weakItem.value else {
+            menuItemsByShortcut.removeValue(forKey: key)
+            return false
+        }
+
+        guard let parentMenu = item.menu else {
+            return false
+        }
+
+        // Keep enablement state fresh in case menu validation hasn't run yet.
+        parentMenu.update()
+        guard item.isEnabled else {
+            return false
+        }
+
+        let index = parentMenu.index(of: item)
+        guard index >= 0 else {
+            return false
+        }
+
+        parentMenu.performActionForItem(at: index)
+        return true
+    }
+
+    func pasteMenuShortcutMatches(_ event: NSEvent) -> Bool {
+        guard let eventKey = MenuShortcutKey(event: event),
+              let menuPaste,
+              let pasteKey = MenuShortcutKey(
+                  keyEquivalent: menuPaste.keyEquivalent,
+                  modifiers: menuPaste.keyEquivalentModifierMask
+              ) else {
+            return false
+        }
+
+        return eventKey == pasteKey
+    }
+
+    /// Hashable key for a menu shortcut match, normalized for quick lookup.
+    private struct MenuShortcutKey: Hashable {
+        private static let shortcutModifiers: NSEvent.ModifierFlags = [.shift, .control, .option, .command]
+
+        private let keyEquivalent: String
+        private let modifiersRawValue: UInt
+
+        init?(keyEquivalent: String, modifiers: NSEvent.ModifierFlags) {
+            let normalized = keyEquivalent.lowercased()
+            guard !normalized.isEmpty else { return nil }
+
+            self.keyEquivalent = normalized
+            self.modifiersRawValue = modifiers.intersection(Self.shortcutModifiers).rawValue
+        }
+
+        init?(event: NSEvent) {
+            guard let keyEquivalent = event.charactersIgnoringModifiers else { return nil }
+            self.init(keyEquivalent: keyEquivalent, modifiers: event.modifierFlags)
+        }
     }
 }
 

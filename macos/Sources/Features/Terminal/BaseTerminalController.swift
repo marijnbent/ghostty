@@ -595,8 +595,9 @@ class BaseTerminalController: NSWindowController,
             // Our focus state requires that this window is key and our currently
             // focused surface is the surface in this view.
             let focused: Bool = (window?.isKeyWindow ?? false) &&
-                surfaceView == focusedSurface &&
-                surfaceView.isFirstResponder
+                !commandPaletteIsShowing &&
+                focusedSurface != nil &&
+                surfaceView == focusedSurface!
             surfaceView.focusDidChange(focused)
         }
     }
@@ -1295,16 +1296,16 @@ class BaseTerminalController: NSWindowController,
     }
 
     func recordWorkspaceUserActivity() {
-        recordWorkspaceActivity(reactivateIfNeeded: true)
+        recordWorkspaceActivity(trigger: .userInteraction)
     }
 
     func recordWorkspaceShellActivity() {
-        recordWorkspaceActivity(reactivateIfNeeded: true)
+        recordWorkspaceActivity(trigger: .shellActivity)
     }
 
-    private func recordWorkspaceActivity(reactivateIfNeeded: Bool) {
+    private func recordWorkspaceActivity(trigger: WorkspaceInactivityPolicy.ReactivationTrigger) {
         workspaceLastActivityAt = .now
-        if reactivateIfNeeded && workspaceIsInactive {
+        if WorkspaceInactivityPolicy.shouldReactivateInactiveWorkspace(for: trigger) && workspaceIsInactive {
             if let terminalController = self as? TerminalController {
                 terminalController.reactivateWorkspace(self, selectAfterReordering: false)
             }

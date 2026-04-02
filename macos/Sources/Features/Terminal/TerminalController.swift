@@ -228,6 +228,12 @@ enum WorkspaceCloseSelection {
 }
 
 enum WorkspaceInactivityPolicy {
+    enum ReactivationTrigger {
+        case selection
+        case userInteraction
+        case shellActivity
+    }
+
     static func canDeactivate(
         workspaceID: String,
         in workspaces: [WorkspaceCloseSelectionEntry]
@@ -235,6 +241,15 @@ enum WorkspaceInactivityPolicy {
         let activeWorkspaces = workspaces.filter { !$0.isInactive }
         guard activeWorkspaces.count == 1 else { return true }
         return activeWorkspaces[0].id != workspaceID
+    }
+
+    static func shouldReactivateInactiveWorkspace(for trigger: ReactivationTrigger) -> Bool {
+        switch trigger {
+        case .userInteraction:
+            true
+        case .selection, .shellActivity:
+            false
+        }
     }
 }
 
@@ -1042,7 +1057,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
 
     private func selectWorkspace(withID id: String) {
         if let target = workspaces.first(where: { $0.id == id }), target.isInactive {
-            reactivateWorkspace(id: target.id, selectAfterReordering: true)
+            switchWorkspace(to: target.id)
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            markWorkspaceAttentionSeen(id: id)
             return
         }
 
@@ -1490,9 +1508,10 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             setWorkspaceLastActivity(workspace.lastActivityAt)
         }
 
-        if workspace.isInactive {
+        if workspace.isInactive &&
+            WorkspaceInactivityPolicy.shouldReactivateInactiveWorkspace(for: .shellActivity) {
             reactivateWorkspace(id: workspaceID, selectAfterReordering: false)
-        } else if refreshSidebar {
+        } else if refreshSidebar || workspace.isInactive {
             refreshWorkspaceSidebar()
         }
     }

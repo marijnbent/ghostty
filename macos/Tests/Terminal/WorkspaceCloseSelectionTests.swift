@@ -121,6 +121,12 @@ struct WorkspaceCloseSelectionTests {
         #expect(WorkspaceInactivityPolicy.canDeactivate(workspaceID: "b", in: workspaces))
     }
 
+    @Test func inactiveWorkspaceOnlyReactivatesForExplicitUserInteraction() {
+        #expect(WorkspaceInactivityPolicy.shouldReactivateInactiveWorkspace(for: .userInteraction))
+        #expect(!WorkspaceInactivityPolicy.shouldReactivateInactiveWorkspace(for: .selection))
+        #expect(!WorkspaceInactivityPolicy.shouldReactivateInactiveWorkspace(for: .shellActivity))
+    }
+
     @Test func closingInactiveWorkspaceStillFallsBackToRemainingInactiveWorkspace() {
         let workspaces: [WorkspaceCloseSelectionEntry] = [
             .init(id: "a", isInactive: true),

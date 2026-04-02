@@ -336,7 +336,9 @@ extension Ghostty {
 
             // Return false if there is no text-like clipboard content so
             // performable paste bindings can pass through to the terminal.
-            guard let str = pasteboard.getOpinionatedStringContents() else { return false }
+            guard case let .string(str) = pasteboard.ghosttyReadableContent() else {
+                return false
+            }
 
             completeClipboardRequest(surface, data: str, state: state)
             return true
